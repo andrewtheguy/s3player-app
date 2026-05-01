@@ -54,7 +54,7 @@ struct ContentView: View {
             Text("Audio URL")
                 .font(.headline)
 
-            TextField("https://example.com/audio.mp3", text: $player.audioURLText)
+            TextField("Paste audio URL", text: $player.audioURLText)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
