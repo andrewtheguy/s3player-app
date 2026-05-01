@@ -6,56 +6,137 @@
 //
 
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var player = AudioPlayerViewModel()
+    @State private var scrubberProgress = 0.0
+    @State private var isScrubbing = false
+    @FocusState private var isURLFieldFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    urlEntry
+                    playbackControls
+                    progressView
+                    statusView
                 }
-                .onDelete(perform: deleteItems)
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(24)
             }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            .navigationTitle("S3 Player")
+            .background(Color(.systemGroupedBackground))
+            .onChange(of: player.progress) { _, newProgress in
+                guard !isScrubbing else { return }
+                scrubberProgress = newProgress
             }
-        } detail: {
-            Text("Select an item")
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Audio URL Player")
+                .font(.largeTitle.bold())
+
+            Text("Paste an audio file or stream URL, then load it into the player.")
+                .font(.body)
+                .foregroundStyle(.secondary)
         }
     }
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+    private var urlEntry: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Audio URL")
+                .font(.headline)
+
+            TextField("https://example.com/audio.mp3", text: $player.audioURLText)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($isURLFieldFocused)
+                .submitLabel(.go)
+                .onSubmit(playURL)
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+
+            Button(action: playURL) {
+                Label(player.isLoading ? "Loading" : "Load and Play", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(!player.canPlayCurrentURL || player.isLoading)
+        }
+    }
+
+    private var playbackControls: some View {
+        HStack(spacing: 12) {
+            Button(action: player.togglePlayback) {
+                Label(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(!player.hasLoadedAudio || player.isLoading)
+
+            Button(role: .destructive, action: player.stop) {
+                Label("Stop", systemImage: "stop.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(!player.hasLoadedAudio)
+        }
+    }
+
+    private var progressView: some View {
+        VStack(spacing: 10) {
+            Slider(
+                value: $scrubberProgress,
+                in: 0...1,
+                onEditingChanged: { isEditing in
+                    isScrubbing = isEditing
+                    if !isEditing {
+                        player.seek(to: scrubberProgress)
+                    }
+                }
+            )
+            .disabled(!player.hasDuration)
+
+            HStack {
+                Text(player.formattedTime(player.elapsedTime))
+                Spacer()
+                Text(player.hasDuration ? player.formattedTime(player.duration) : "Live")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var statusView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(player.statusMessage, systemImage: player.isLoading ? "hourglass" : "waveform")
+                .foregroundStyle(.secondary)
+
+            if !player.currentURLText.isEmpty {
+                Text(player.currentURLText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
             }
         }
+        .font(.subheadline)
+    }
+
+    private func playURL() {
+        isURLFieldFocused = false
+        player.loadAndPlay()
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
