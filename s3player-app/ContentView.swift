@@ -32,6 +32,9 @@ struct ContentView: View {
                 guard !isScrubbing else { return }
                 scrubberProgress = newProgress
             }
+            .onDisappear {
+                player.stop()
+            }
         }
     }
 

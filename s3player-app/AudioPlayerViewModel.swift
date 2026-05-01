@@ -213,14 +213,4 @@ final class AudioPlayerViewModel: ObservableObject {
 
         playbackEndObserver = nil
     }
-
-    deinit {
-        if let player, let timeObserverToken {
-            player.removeTimeObserver(timeObserverToken)
-        }
-
-        if let playbackEndObserver {
-            NotificationCenter.default.removeObserver(playbackEndObserver)
-        }
-    }
 }
