@@ -109,6 +109,14 @@ final class PlaybackController: ObservableObject {
         Task { await saveProgressIfActive() }
     }
 
+    func seek(toMilliseconds ms: Int) {
+        guard sessionState == .active else { return }
+        guard player.hasDuration, player.duration > 0 else { return }
+        let progress = Double(ms) / 1000.0 / player.duration
+        player.seek(to: min(max(progress, 0), 1))
+        Task { await saveProgressIfActive() }
+    }
+
     func expand() {
         isExpanded = true
     }
@@ -174,6 +182,9 @@ final class PlaybackController: ObservableObject {
                 artist: show.name
             )
             lastSavedPositionMs = resumePositionMs
+            if sessionState == .active, !player.isPlaying {
+                player.togglePlayback()
+            }
         } catch APIError.unauthorized {
             auth.logout()
         } catch {

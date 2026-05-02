@@ -50,6 +50,7 @@ struct MiniNowPlayingBar: View {
                 .accessibilityLabel("Open now playing")
                 .accessibilityHint("Expands the full player")
 
+                sessionStatusBadge
                 actionButton
             }
             .padding(.horizontal, 16)
@@ -78,6 +79,38 @@ struct MiniNowPlayingBar: View {
     private var progressText: String {
         guard player.hasDuration else { return "--:-- / --:--" }
         return "\(player.formattedTime(player.elapsedTime)) / \(player.formattedTime(player.duration))"
+    }
+
+    private var sessionStatusBadge: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(sessionStatusColor)
+                .frame(width: 6, height: 6)
+            Text(sessionStatusText)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(sessionStatusColor)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(sessionStatusColor.opacity(0.12), in: Capsule())
+    }
+
+    private var sessionStatusText: String {
+        switch controller.sessionState {
+        case .active: return "Active"
+        case .activating: return "Activating"
+        case .inactive: return "Inactive"
+        case .displaced: return "Displaced"
+        }
+    }
+
+    private var sessionStatusColor: Color {
+        switch controller.sessionState {
+        case .active: return .green
+        case .activating: return .yellow
+        case .inactive: return .secondary
+        case .displaced: return .orange
+        }
     }
 
     @ViewBuilder
