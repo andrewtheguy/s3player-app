@@ -30,7 +30,14 @@ struct NowPlayingSheet: View {
                         episodeDetailsLink(show: show, episode: episode)
                     }
                     playbackControls
-                    if controller.sessionState == .active {
+                    if player.playbackUnsupported {
+                        unplayableBanner
+                    } else if controller.replayConfirmNeeded {
+                        replayConfirmBanner
+                    }
+                    if controller.sessionState == .active,
+                       !controller.replayConfirmNeeded,
+                       !player.playbackUnsupported {
                         progressView
                         if !chapters.isEmpty {
                             chaptersSection
@@ -237,7 +244,12 @@ struct NowPlayingSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!player.hasLoadedAudio || player.isLoading)
+                .disabled(
+                    !player.hasLoadedAudio
+                    || player.isLoading
+                    || controller.replayConfirmNeeded
+                    || player.playbackUnsupported
+                )
 
                 Button { controller.skip(by: 30) } label: {
                     Image(systemName: "goforward.30")
@@ -272,6 +284,55 @@ struct NowPlayingSheet: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
+        }
+    }
+
+    private var unplayableBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Cannot play this episode", systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.red)
+            Text("The audio file does not report a finite duration, so progress and completion can't be tracked. Playback is disabled.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.red.opacity(0.1))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.red.opacity(0.4), lineWidth: 1)
+        }
+    }
+
+    private var replayConfirmBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Episode already completed", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("You've finished this episode. Replay from the beginning to listen again — this resets the saved position and moves it back to Continue listening.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button { controller.confirmReplay() } label: {
+                Label("Replay from beginning", systemImage: "arrow.counterclockwise")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(controller.sessionState != .active)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.yellow.opacity(0.1))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
         }
     }
 

@@ -18,6 +18,7 @@ final class AudioPlayerViewModel: ObservableObject {
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var hasFinishedPlayback = false
+    @Published private(set) var playbackUnsupported = false
 
     private var player: AVPlayer?
     private var timeObserverToken: Any?
@@ -28,6 +29,7 @@ final class AudioPlayerViewModel: ObservableObject {
     private var nowPlayingTitle: String?
     private var nowPlayingArtist: String?
     private var didConfigureRemoteCommands = false
+    private var didReachReadyToPlay = false
     private var remoteCommandTokens: [(MPRemoteCommand, Any)] = []
 
     deinit {
@@ -80,6 +82,9 @@ final class AudioPlayerViewModel: ObservableObject {
         hasFinishedPlayback = false
         statusMessage = "Loading audio..."
 
+        playbackUnsupported = false
+        didReachReadyToPlay = false
+
         observe(item: item)
         addPeriodicTimeObserver(to: player)
         configureRemoteCommandsIfNeeded()
@@ -121,6 +126,8 @@ final class AudioPlayerViewModel: ObservableObject {
         duration = 0
         pendingSeekSeconds = 0
         hasFinishedPlayback = false
+        playbackUnsupported = false
+        didReachReadyToPlay = false
         nowPlayingTitle = nil
         nowPlayingArtist = nil
         clearNowPlayingInfo()
@@ -212,8 +219,10 @@ final class AudioPlayerViewModel: ObservableObject {
 
         itemDurationObservation = item.observe(\.duration, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor [weak self] in
-                self?.duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
-                self?.updateNowPlayingInfo()
+                guard let self else { return }
+                self.duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
+                self.refreshPlaybackSupported()
+                self.updateNowPlayingInfo()
             }
         }
 
@@ -236,8 +245,12 @@ final class AudioPlayerViewModel: ObservableObject {
         case .readyToPlay:
             isLoading = false
             duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
+            didReachReadyToPlay = true
+            refreshPlaybackSupported()
             applyPendingSeekIfNeeded()
-            statusMessage = isPlaying ? "Playing." : "Ready to play."
+            if !playbackUnsupported {
+                statusMessage = isPlaying ? "Playing." : "Ready to play."
+            }
             updateNowPlayingInfo()
         case .failed:
             isLoading = false
@@ -259,6 +272,28 @@ final class AudioPlayerViewModel: ObservableObject {
                 self?.elapsedTime = time.seconds.isFinite ? time.seconds : 0
             }
         }
+    }
+
+    // Once an item reaches .readyToPlay, a missing/Infinite/zero duration means
+    // we cannot track progress or completion. Pause and surface a flag so the
+    // controller can refuse to write progress and the view can explain why.
+    private func refreshPlaybackSupported() {
+        guard didReachReadyToPlay else { return }
+        let supported = hasDuration
+        if supported {
+            if playbackUnsupported {
+                playbackUnsupported = false
+            }
+            return
+        }
+        if !playbackUnsupported {
+            playbackUnsupported = true
+        }
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+        }
+        statusMessage = "Cannot play: unknown duration."
     }
 
     private func applyPendingSeekIfNeeded() {
