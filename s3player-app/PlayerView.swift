@@ -36,7 +36,9 @@ struct PlayerView: View {
             VStack(alignment: .leading, spacing: 24) {
                 metadata
                 playbackControls
-                progressView
+                if sessionState == .active {
+                    progressView
+                }
                 statusView
             }
             .frame(maxWidth: 720, alignment: .leading)
@@ -50,6 +52,10 @@ struct PlayerView: View {
         .task {
             guard !didStartLoad else { return }
             didStartLoad = true
+            // Launch-time validation in AuthViewModel has already resolved the rehydrated token; trust the resulting state here.
+            if auth.playerSessionToken != nil {
+                sessionState = .active
+            }
             await fetchResumeAndPrepare()
         }
         .onChange(of: player.progress) { _, newProgress in
@@ -67,6 +73,13 @@ struct PlayerView: View {
         .onChange(of: player.hasFinishedPlayback) { _, finished in
             if finished {
                 Task { await markEpisodeCompleted() }
+            }
+        }
+        .onChange(of: auth.playerSessionToken) { _, newToken in
+            // Heartbeat or another path cleared the token externally — reflect the displacement here.
+            if newToken == nil, sessionState == .active || sessionState == .activating {
+                sessionState = .displaced
+                if player.isPlaying { player.togglePlayback() }
             }
         }
         .onDisappear {
@@ -108,6 +121,13 @@ struct PlayerView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .tint(.orange)
+        case .inactive:
+            Button(action: { Task { await activateAndPlay() } }) {
+                Label("Start Playback", systemImage: "play.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         case .activating:
             Button {
             } label: {
@@ -117,7 +137,7 @@ struct PlayerView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(true)
-        case .inactive, .active:
+        case .active:
             Button(action: handlePlayTap) {
                 Label(
                     player.isPlaying ? "Pause" : "Play",
@@ -166,6 +186,10 @@ struct PlayerView: View {
                 Label("Another device is playing. Take over to continue.", systemImage: "arrow.uturn.right")
                     .foregroundStyle(.orange)
                     .font(.subheadline)
+            } else if sessionState == .inactive {
+                Label("Tap Start Playback to claim playback on this device.", systemImage: "play.circle")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
             } else {
                 Label(player.statusMessage, systemImage: player.isLoading ? "hourglass" : "waveform")
                     .foregroundStyle(.secondary)
@@ -211,19 +235,14 @@ struct PlayerView: View {
     }
 
     private func handlePlayTap() {
-        if player.isPlaying {
-            player.togglePlayback()
-            return
-        }
+        guard sessionState == .active else { return }
+        player.togglePlayback()
+    }
 
-        switch sessionState {
-        case .active:
-            player.togglePlayback()
-        case .inactive:
-            Task { await activateAndPlay() }
-        case .activating, .displaced:
-            break
-        }
+    private func handleDisplacement() {
+        auth.setPlayerSessionToken(nil)
+        sessionState = .displaced
+        if player.isPlaying { player.togglePlayback() }
     }
 
     private func activateAndPlay() async {
@@ -231,28 +250,9 @@ struct PlayerView: View {
         sessionState = .activating
         loadError = nil
 
-        if let existing = auth.playerSessionToken {
-            do {
-                try await client.validateSession(playerToken: existing)
-                sessionState = .active
-                player.togglePlayback()
-                return
-            } catch APIError.sessionDisplaced {
-                sessionState = .displaced
-                return
-            } catch APIError.unauthorized {
-                auth.logout()
-                return
-            } catch {
-                sessionState = .inactive
-                loadError = errorMessage(error)
-                return
-            }
-        }
-
         do {
             let claim = try await client.claimSession()
-            auth.playerSessionToken = claim.session_token
+            auth.setPlayerSessionToken(claim.session_token)
             sessionState = .active
             player.togglePlayback()
         } catch APIError.unauthorized {
@@ -270,11 +270,9 @@ struct PlayerView: View {
             loadError = nil
             do {
                 let claim = try await client.claimSession()
-                auth.playerSessionToken = claim.session_token
+                auth.setPlayerSessionToken(claim.session_token)
                 sessionState = .active
-                if !player.isPlaying {
-                    player.togglePlayback()
-                }
+                player.togglePlayback()
             } catch APIError.unauthorized {
                 auth.logout()
             } catch {
@@ -308,7 +306,7 @@ struct PlayerView: View {
         do {
             try await client.markComplete(episodeId: episode.id, playerToken: token)
         } catch APIError.sessionDisplaced {
-            sessionState = .displaced
+            handleDisplacement()
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
@@ -337,8 +335,7 @@ struct PlayerView: View {
             )
             lastSavedPositionMs = positionMs
         } catch APIError.sessionDisplaced {
-            sessionState = .displaced
-            if player.isPlaying { player.togglePlayback() }
+            handleDisplacement()
         } catch APIError.unauthorized {
             auth.logout()
         } catch {

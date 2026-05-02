@@ -18,9 +18,13 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var host: String?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isValidatingPlayerSession = false
+    @Published private(set) var playerSessionToken: String?
 
     private let defaults: UserDefaults
     private let session: URLSession
+    private var heartbeatTask: Task<Void, Never>?
+    private static let heartbeatInterval: UInt64 = 30 * 1_000_000_000
 
     private enum Keys {
         static let host = "auth.host"
@@ -28,14 +32,12 @@ final class AuthViewModel: ObservableObject {
         static let playerSessionToken = "auth.playerSessionToken"
     }
 
-    var playerSessionToken: String? {
-        get { defaults.string(forKey: Keys.playerSessionToken) }
-        set {
-            if let newValue {
-                defaults.set(newValue, forKey: Keys.playerSessionToken)
-            } else {
-                defaults.removeObject(forKey: Keys.playerSessionToken)
-            }
+    func setPlayerSessionToken(_ newValue: String?) {
+        playerSessionToken = newValue
+        if let newValue {
+            defaults.set(newValue, forKey: Keys.playerSessionToken)
+        } else {
+            defaults.removeObject(forKey: Keys.playerSessionToken)
         }
     }
 
@@ -45,10 +47,60 @@ final class AuthViewModel: ObservableObject {
 
         let storedHost = defaults.string(forKey: Keys.host)
         let storedToken = defaults.string(forKey: Keys.token)
+        let storedPlayerToken = defaults.string(forKey: Keys.playerSessionToken)
 
         self.hostText = storedHost ?? Self.defaultHost
         self.host = storedHost
         self.token = storedToken
+        self.playerSessionToken = storedPlayerToken
+
+        // Block UI on a launch-time validate so a stale rehydrated player session token resolves before any browse / playback action runs.
+        if storedHost != nil, storedToken != nil, storedPlayerToken != nil {
+            self.isValidatingPlayerSession = true
+            Task { await self.validateStoredPlayerSession() }
+        }
+
+        startHeartbeat()
+    }
+
+    func validateStoredPlayerSession() async {
+        defer { isValidatingPlayerSession = false }
+        guard let client = APIClient(auth: self),
+              let playerToken = playerSessionToken else { return }
+        do {
+            try await client.validateSession(playerToken: playerToken)
+        } catch APIError.sessionDisplaced {
+            setPlayerSessionToken(nil)
+        } catch APIError.unauthorized {
+            logout()
+        } catch {
+            // Transient network/server failure: keep the token; subsequent player calls will surface displacement on 409.
+        }
+    }
+
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.heartbeatInterval)
+                if Task.isCancelled { return }
+                await self?.heartbeatValidate()
+            }
+        }
+    }
+
+    private func heartbeatValidate() async {
+        guard let client = APIClient(auth: self),
+              let playerToken = playerSessionToken else { return }
+        do {
+            try await client.validateSession(playerToken: playerToken)
+        } catch APIError.sessionDisplaced {
+            setPlayerSessionToken(nil)
+        } catch APIError.unauthorized {
+            logout()
+        } catch {
+            // Transient: keep token; the next tick retries.
+        }
     }
 
     var isAuthenticated: Bool {
@@ -106,7 +158,7 @@ final class AuthViewModel: ObservableObject {
     func logout() {
         token = nil
         defaults.removeObject(forKey: Keys.token)
-        defaults.removeObject(forKey: Keys.playerSessionToken)
+        setPlayerSessionToken(nil)
         passwordText = ""
         errorMessage = nil
     }

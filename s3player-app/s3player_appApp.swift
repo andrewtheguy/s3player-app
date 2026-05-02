@@ -14,10 +14,27 @@ struct s3player_appApp: App {
     var body: some Scene {
         WindowGroup {
             if auth.isAuthenticated {
-                ContentView(auth: auth)
+                if auth.isValidatingPlayerSession {
+                    SessionValidationView()
+                } else {
+                    ContentView(auth: auth)
+                }
             } else {
                 LoginView(auth: auth)
             }
         }
+    }
+}
+
+private struct SessionValidationView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Restoring playback session…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
