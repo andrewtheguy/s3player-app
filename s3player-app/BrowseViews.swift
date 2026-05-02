@@ -457,7 +457,6 @@ private struct EpisodeDetailView: View {
         List {
             summarySection
             detailsSections
-            playSection
         }
         .navigationTitle("Episode")
         #if os(iOS)
@@ -487,12 +486,19 @@ private struct EpisodeDetailView: View {
 
     private var summarySection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(DateFormatter.sharedISODate.string(from: displayedEpisode.aired_on))
-                    .font(.title3.weight(.semibold))
-                Text(displayedShow.name)
-                    .font(.headline)
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayedShow.name)
+                        .font(.title2.weight(.bold))
+                        .lineLimit(2)
+
+                    Text(DateFormatter.sharedISODate.string(from: displayedEpisode.aired_on))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
                     Text(displayedShow.station)
                     let slot = formatTimeSlot(displayedEpisode.time_slot)
                     if !slot.isEmpty {
@@ -500,17 +506,42 @@ private struct EpisodeDetailView: View {
                         Text(slot)
                     }
                 }
-                .font(.subheadline)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
+
+                playButton
 
                 if let savedPositionText {
                     Label(savedPositionText, systemImage: "clock.arrow.circlepath")
-                        .font(.caption.monospacedDigit())
+                        .font(.footnote.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var playButton: some View {
+        Button {
+            playback.play(episode: displayedEpisode, show: displayedShow)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                Text(playButtonTitle)
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 4)
         }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+    }
+
+    private var playButtonTitle: String {
+        if let savedProgress, !savedProgress.completed, savedProgress.position_ms > 0 {
+            return "Resume"
+        }
+        return "Play Episode"
     }
 
     private var savedPositionText: String? {
@@ -564,19 +595,6 @@ private struct EpisodeDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    private var playSection: some View {
-        Section {
-            Button {
-                playback.play(episode: displayedEpisode, show: displayedShow)
-            } label: {
-                Label("Play Episode", systemImage: "play.circle.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         }
     }
 
