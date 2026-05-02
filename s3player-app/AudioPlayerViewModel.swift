@@ -16,12 +16,14 @@ final class AudioPlayerViewModel: ObservableObject {
     @Published private(set) var statusMessage = "Loading audio..."
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
+    @Published private(set) var hasFinishedPlayback = false
 
     private var player: AVPlayer?
     private var timeObserverToken: Any?
     private var itemStatusObservation: NSKeyValueObservation?
     private var itemDurationObservation: NSKeyValueObservation?
     private var playbackEndObserver: NSObjectProtocol?
+    private var pendingSeekSeconds: Double = 0
 
     var hasLoadedAudio: Bool {
         player != nil
@@ -36,14 +38,17 @@ final class AudioPlayerViewModel: ObservableObject {
         return min(max(elapsedTime / duration, 0), 1)
     }
 
-    func prepare(url: URL) {
+    func prepare(url: URL, resumeAtSeconds: Double = 0) {
         stop()
         guard configureAudioSession() else { return }
 
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
         self.player = player
+        pendingSeekSeconds = max(0, resumeAtSeconds)
+        elapsedTime = pendingSeekSeconds
         isLoading = true
+        hasFinishedPlayback = false
         statusMessage = "Loading audio..."
 
         observe(item: item)
@@ -82,6 +87,8 @@ final class AudioPlayerViewModel: ObservableObject {
         isLoading = false
         elapsedTime = 0
         duration = 0
+        pendingSeekSeconds = 0
+        hasFinishedPlayback = false
     }
 
     func seek(to progress: Double) {
@@ -148,6 +155,7 @@ final class AudioPlayerViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isPlaying = false
                 self?.statusMessage = "Finished."
+                self?.hasFinishedPlayback = true
             }
         }
     }
@@ -157,6 +165,7 @@ final class AudioPlayerViewModel: ObservableObject {
         case .readyToPlay:
             isLoading = false
             duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
+            applyPendingSeekIfNeeded()
             statusMessage = isPlaying ? "Playing." : "Ready to play."
         case .failed:
             isLoading = false
@@ -175,6 +184,18 @@ final class AudioPlayerViewModel: ObservableObject {
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 self?.elapsedTime = time.seconds.isFinite ? time.seconds : 0
+            }
+        }
+    }
+
+    private func applyPendingSeekIfNeeded() {
+        guard pendingSeekSeconds > 0, let player else { return }
+        let clamped = duration > 0 ? min(pendingSeekSeconds, max(0, duration - 0.5)) : pendingSeekSeconds
+        pendingSeekSeconds = 0
+        let target = CMTime(seconds: clamped, preferredTimescale: 600)
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.elapsedTime = target.seconds
             }
         }
     }

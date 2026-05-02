@@ -25,6 +25,18 @@ final class AuthViewModel: ObservableObject {
     private enum Keys {
         static let host = "auth.host"
         static let token = "auth.token"
+        static let playerSessionToken = "auth.playerSessionToken"
+    }
+
+    var playerSessionToken: String? {
+        get { defaults.string(forKey: Keys.playerSessionToken) }
+        set {
+            if let newValue {
+                defaults.set(newValue, forKey: Keys.playerSessionToken)
+            } else {
+                defaults.removeObject(forKey: Keys.playerSessionToken)
+            }
+        }
     }
 
     init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
@@ -94,6 +106,7 @@ final class AuthViewModel: ObservableObject {
     func logout() {
         token = nil
         defaults.removeObject(forKey: Keys.token)
+        defaults.removeObject(forKey: Keys.playerSessionToken)
         passwordText = ""
         errorMessage = nil
     }
