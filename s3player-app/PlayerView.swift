@@ -7,6 +7,13 @@
 
 import SwiftUI
 
+private enum SessionState {
+    case inactive
+    case activating
+    case active
+    case displaced
+}
+
 struct PlayerView: View {
     let episode: Episode
     let show: ShowDetail
@@ -16,6 +23,13 @@ struct PlayerView: View {
     @State private var isScrubbing = false
     @State private var loadError: String?
     @State private var didStartLoad = false
+    @State private var sessionState: SessionState = .inactive
+    @State private var resumePositionMs: Int = 0
+    @State private var hasFetchedProgress = false
+    @State private var progressTask: Task<Void, Never>?
+    @State private var lastSavedPositionMs: Int = -1
+
+    private let progressSaveInterval: UInt64 = 5_000_000_000
 
     var body: some View {
         ScrollView {
@@ -36,13 +50,31 @@ struct PlayerView: View {
         .task {
             guard !didStartLoad else { return }
             didStartLoad = true
-            await loadAndPlay()
+            await fetchResumeAndPrepare()
         }
         .onChange(of: player.progress) { _, newProgress in
             guard !isScrubbing else { return }
             scrubberProgress = newProgress
         }
+        .onChange(of: player.isPlaying) { _, isPlaying in
+            if isPlaying {
+                startProgressTimer()
+            } else {
+                stopProgressTimer()
+                Task { await saveProgressIfActive() }
+            }
+        }
+        .onChange(of: player.hasFinishedPlayback) { _, finished in
+            if finished {
+                Task { await markEpisodeCompleted() }
+            }
+        }
         .onDisappear {
+            stopProgressTimer()
+            // Snapshot position before player.stop() resets elapsedTime to 0; the detached Task captures these values.
+            let positionMs = max(0, Int(player.elapsedTime * 1000))
+            let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+            Task { await saveProgress(positionMs: positionMs, durationMs: durationMs) }
             player.stop()
         }
     }
@@ -65,9 +97,28 @@ struct PlayerView: View {
         }
     }
 
+    @ViewBuilder
     private var playbackControls: some View {
-        HStack(spacing: 12) {
-            Button(action: player.togglePlayback) {
+        switch sessionState {
+        case .displaced:
+            Button(action: takeOver) {
+                Label("Take Over Playback", systemImage: "arrow.uturn.right.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.orange)
+        case .activating:
+            Button {
+            } label: {
+                Label("Connecting…", systemImage: "hourglass")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(true)
+        case .inactive, .active:
+            Button(action: handlePlayTap) {
                 Label(
                     player.isPlaying ? "Pause" : "Play",
                     systemImage: player.isPlaying ? "pause.fill" : "play.fill"
@@ -89,6 +140,7 @@ struct PlayerView: View {
                     isScrubbing = editing
                     if !editing {
                         player.seek(to: scrubberProgress)
+                        Task { await saveProgressIfActive() }
                     }
                 }
             )
@@ -110,6 +162,10 @@ struct PlayerView: View {
                 Label(loadError, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
                     .font(.subheadline)
+            } else if sessionState == .displaced {
+                Label("Another device is playing. Take over to continue.", systemImage: "arrow.uturn.right")
+                    .foregroundStyle(.orange)
+                    .font(.subheadline)
             } else {
                 Label(player.statusMessage, systemImage: player.isLoading ? "hourglass" : "waveform")
                     .foregroundStyle(.secondary)
@@ -118,22 +174,175 @@ struct PlayerView: View {
         }
     }
 
-    private func loadAndPlay() async {
+    private func fetchResumeAndPrepare() async {
         guard let client = APIClient(auth: auth) else {
             loadError = "Not signed in."
             return
         }
+
+        if !hasFetchedProgress {
+            do {
+                let progress = try await client.getProgress(episodeId: episode.id)
+                resumePositionMs = progress.completed ? 0 : progress.position_ms
+                hasFetchedProgress = true
+            } catch APIError.unauthorized {
+                auth.logout()
+                return
+            } catch {
+                resumePositionMs = 0
+                hasFetchedProgress = true
+            }
+        }
+
         do {
             let response = try await client.getAudioURL(episodeId: episode.id)
             guard let url = URL(string: response.url) else {
                 loadError = "Server returned an invalid audio URL."
                 return
             }
-            player.prepare(url: url)
+            let resumeSeconds = Double(resumePositionMs) / 1000
+            player.prepare(url: url, resumeAtSeconds: resumeSeconds)
+            lastSavedPositionMs = resumePositionMs
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
             loadError = errorMessage(error)
+        }
+    }
+
+    private func handlePlayTap() {
+        if player.isPlaying {
+            player.togglePlayback()
+            return
+        }
+
+        switch sessionState {
+        case .active:
+            player.togglePlayback()
+        case .inactive:
+            Task { await activateAndPlay() }
+        case .activating, .displaced:
+            break
+        }
+    }
+
+    private func activateAndPlay() async {
+        guard let client = APIClient(auth: auth) else { return }
+        sessionState = .activating
+        loadError = nil
+
+        if let existing = auth.playerSessionToken {
+            do {
+                try await client.validateSession(playerToken: existing)
+                sessionState = .active
+                player.togglePlayback()
+                return
+            } catch APIError.sessionDisplaced {
+                sessionState = .displaced
+                return
+            } catch APIError.unauthorized {
+                auth.logout()
+                return
+            } catch {
+                sessionState = .inactive
+                loadError = errorMessage(error)
+                return
+            }
+        }
+
+        do {
+            let claim = try await client.claimSession()
+            auth.playerSessionToken = claim.session_token
+            sessionState = .active
+            player.togglePlayback()
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            sessionState = .inactive
+            loadError = errorMessage(error)
+        }
+    }
+
+    private func takeOver() {
+        Task {
+            guard let client = APIClient(auth: auth) else { return }
+            sessionState = .activating
+            loadError = nil
+            do {
+                let claim = try await client.claimSession()
+                auth.playerSessionToken = claim.session_token
+                sessionState = .active
+                if !player.isPlaying {
+                    player.togglePlayback()
+                }
+            } catch APIError.unauthorized {
+                auth.logout()
+            } catch {
+                sessionState = .displaced
+                loadError = errorMessage(error)
+            }
+        }
+    }
+
+    private func startProgressTimer() {
+        stopProgressTimer()
+        progressTask = Task { [progressSaveInterval] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: progressSaveInterval)
+                if Task.isCancelled { return }
+                await saveProgressIfActive()
+            }
+        }
+    }
+
+    private func stopProgressTimer() {
+        progressTask?.cancel()
+        progressTask = nil
+    }
+
+    private func markEpisodeCompleted() async {
+        guard sessionState == .active,
+              let token = auth.playerSessionToken,
+              let client = APIClient(auth: auth) else { return }
+        await saveProgressIfActive()
+        do {
+            try await client.markComplete(episodeId: episode.id, playerToken: token)
+        } catch APIError.sessionDisplaced {
+            sessionState = .displaced
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            loadError = errorMessage(error)
+        }
+    }
+
+    private func saveProgressIfActive() async {
+        guard sessionState == .active else { return }
+        let positionMs = max(0, Int(player.elapsedTime * 1000))
+        let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+        await saveProgress(positionMs: positionMs, durationMs: durationMs)
+    }
+
+    private func saveProgress(positionMs: Int, durationMs: Int?) async {
+        guard sessionState == .active,
+              let token = auth.playerSessionToken,
+              let client = APIClient(auth: auth) else { return }
+        if positionMs == lastSavedPositionMs { return }
+        do {
+            try await client.saveProgress(
+                episodeId: episode.id,
+                playerToken: token,
+                positionMs: positionMs,
+                durationMs: durationMs
+            )
+            lastSavedPositionMs = positionMs
+        } catch APIError.sessionDisplaced {
+            sessionState = .displaced
+            if player.isPlaying { player.togglePlayback() }
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            // Transient network or server errors: keep playing, retry on next tick.
         }
     }
 

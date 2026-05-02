@@ -68,6 +68,22 @@ struct AudioUrlResponse: Decodable {
     let expires_in: Int
 }
 
+struct ClaimResponse: Decodable {
+    let session_token: String
+}
+
+struct ProgressRequest: Encodable {
+    let position_ms: Int
+    let duration_ms: Int?
+}
+
+struct ProgressResponse: Decodable {
+    let position_ms: Int
+    let duration_ms: Int?
+    let completed: Bool
+    let last_played_at: String?
+}
+
 enum CatalogDecoder {
     static func make() -> JSONDecoder {
         let decoder = JSONDecoder()
