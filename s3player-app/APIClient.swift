@@ -95,12 +95,16 @@ struct APIClient {
         try await get("api/player/episodes/\(episodeId)/progress")
     }
 
-    func listRecent(limit: Int = 10) async throws -> RecentResponse {
-        try await get("api/player/recent", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+    func listRecentCompleted(limit: Int = 10) async throws -> RecentResponse {
+        try await get("api/player/recent-completed", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
     }
 
     func listInProgress(limit: Int = 10) async throws -> RecentResponse {
         try await get("api/player/in-progress", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    func deleteProgress(episodeId: Int) async throws {
+        let _: EmptyResponse = try await delete("api/player/episodes/\(episodeId)/progress")
     }
 
     func claimSession() async throws -> ClaimResponse {
@@ -151,6 +155,16 @@ struct APIClient {
             body: Optional<Empty>.none,
             playerSessionToken: nil,
             queryItems: queryItems
+        )
+        return try await execute(request)
+    }
+
+    private func delete<T: Decodable>(_ path: String) async throws -> T {
+        let request = try makeRequest(
+            path: path,
+            method: "DELETE",
+            body: Optional<Empty>.none,
+            playerSessionToken: nil
         )
         return try await execute(request)
     }

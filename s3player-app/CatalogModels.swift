@@ -108,7 +108,6 @@ struct RecentEpisode: Decodable, Hashable, Identifiable {
     let position_ms: Int
     let duration_ms: Int?
     let last_played_at: String
-    let completed: Bool
 }
 
 struct RecentResponse: Decodable {
