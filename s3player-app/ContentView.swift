@@ -9,13 +9,16 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var auth: AuthViewModel
+    @StateObject private var playback: PlaybackController
+
+    init(auth: AuthViewModel) {
+        self.auth = auth
+        _playback = StateObject(wrappedValue: PlaybackController(auth: auth))
+    }
 
     var body: some View {
         NavigationStack {
             StationsView(auth: auth)
-                .navigationDestination(for: EpisodeRouteKey.self) { key in
-                    PlayerView(episode: key.episode, show: key.show, auth: auth)
-                }
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button("Sign Out") {
@@ -23,6 +26,16 @@ struct ContentView: View {
                         }
                     }
                 }
+        }
+        .environmentObject(playback)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            MiniNowPlayingBar(controller: playback)
+        }
+        .sheet(isPresented: $playback.isExpanded) {
+            NowPlayingSheet(controller: playback)
+                #if os(iOS)
+                .presentationDetents([.large])
+                #endif
         }
     }
 }
