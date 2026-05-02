@@ -688,7 +688,14 @@ private struct RecentCard: View {
 
     @ViewBuilder
     private var footer: some View {
-        if entry.completed {
+        if isNowPlaying {
+            Label("Now Playing", systemImage: "waveform")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.15), in: Capsule())
+        } else if entry.completed {
             Text("Played")
                 .font(.caption.monospacedDigit())
                 .padding(.horizontal, 8)
@@ -707,6 +714,10 @@ private struct RecentCard: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var isNowPlaying: Bool {
+        playback.currentEpisode?.id == entry.id && playback.sessionState == .active
     }
 }
 
