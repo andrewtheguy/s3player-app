@@ -78,6 +78,10 @@ struct APIClient {
         try await get("api/shows/\(showId)/months/\(year)/\(month)/episodes")
     }
 
+    func getEpisodeDetail(episodeId: Int) async throws -> EpisodeDetail {
+        try await get("api/shows/episodes/\(episodeId)")
+    }
+
     func getAudioURL(episodeId: Int) async throws -> AudioUrlResponse {
         try await get("api/shows/episodes/\(episodeId)/audio_url")
     }
