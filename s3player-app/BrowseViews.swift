@@ -189,7 +189,11 @@ struct StationsView: View {
             auth.logout()
             return
         } catch {
-            // Keep prior values on transient failure.
+            // User-initiated retry surfaces the error so the rail can show another Retry button;
+            // background refreshes keep prior loaded values rather than overwriting them.
+            if showLoading {
+                inProgressState = .failed(errorMessage(error))
+            }
         }
 
         do {
@@ -197,7 +201,9 @@ struct StationsView: View {
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
-            // Keep prior values on transient failure.
+            if showLoading {
+                recentState = .failed(errorMessage(error))
+            }
         }
     }
 }
