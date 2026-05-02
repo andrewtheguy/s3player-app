@@ -28,6 +28,16 @@ final class AudioPlayerViewModel: ObservableObject {
     private var nowPlayingTitle: String?
     private var nowPlayingArtist: String?
     private var didConfigureRemoteCommands = false
+    private var remoteCommandTokens: [(MPRemoteCommand, Any)] = []
+
+    deinit {
+        // MPRemoteCommandCenter retains every closure added via addTarget(handler:).
+        // Without this cleanup, each PlayerView instance leaks 6 closures into the
+        // shared command center for the lifetime of the app.
+        for (command, token) in remoteCommandTokens {
+            command.removeTarget(token)
+        }
+    }
 
     var hasLoadedAudio: Bool {
         player != nil
@@ -246,33 +256,42 @@ final class AudioPlayerViewModel: ObservableObject {
 
         // MPRemoteCommandCenter invokes these handlers on an arbitrary queue, so every
         // touch of MainActor-isolated state must hop via Task { @MainActor in ... }.
+        // Tokens returned by addTarget(handler:) are captured so deinit can remove them.
 
-        center.playCommand.addTarget { [weak self] _ in
+        let playToken = center.playCommand.addTarget { [weak self] _ in
             self?.handleRemotePlay() ?? .commandFailed
         }
-        center.pauseCommand.addTarget { [weak self] _ in
+        remoteCommandTokens.append((center.playCommand, playToken))
+
+        let pauseToken = center.pauseCommand.addTarget { [weak self] _ in
             self?.handleRemotePause() ?? .commandFailed
         }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+        remoteCommandTokens.append((center.pauseCommand, pauseToken))
+
+        let toggleToken = center.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
             Task { @MainActor in self.togglePlayback() }
             return .success
         }
+        remoteCommandTokens.append((center.togglePlayPauseCommand, toggleToken))
 
         center.skipBackwardCommand.preferredIntervals = [15]
-        center.skipBackwardCommand.addTarget { [weak self] _ in
+        let skipBackToken = center.skipBackwardCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
             Task { @MainActor in self.skip(by: -15) }
             return .success
         }
+        remoteCommandTokens.append((center.skipBackwardCommand, skipBackToken))
+
         center.skipForwardCommand.preferredIntervals = [30]
-        center.skipForwardCommand.addTarget { [weak self] _ in
+        let skipForwardToken = center.skipForwardCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
             Task { @MainActor in self.skip(by: 30) }
             return .success
         }
+        remoteCommandTokens.append((center.skipForwardCommand, skipForwardToken))
 
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        let positionToken = center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard
                 let self,
                 let event = event as? MPChangePlaybackPositionCommandEvent
@@ -290,6 +309,7 @@ final class AudioPlayerViewModel: ObservableObject {
             }
             return .success
         }
+        remoteCommandTokens.append((center.changePlaybackPositionCommand, positionToken))
     }
 
     nonisolated private func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
