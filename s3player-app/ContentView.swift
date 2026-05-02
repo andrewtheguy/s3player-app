@@ -43,6 +43,7 @@ struct ContentView: View {
         .environmentObject(navigation)
         .sheet(isPresented: $playback.isExpanded) {
             NowPlayingSheet(controller: playback)
+                .environmentObject(navigation)
                 #if os(iOS)
                 .presentationDetents([.large])
                 #endif
