@@ -32,9 +32,9 @@ struct NowPlayingSheet: View {
                     playbackControls
                     if controller.sessionState == .active {
                         progressView
-                    }
-                    if !chapters.isEmpty {
-                        chaptersSection
+                        if !chapters.isEmpty {
+                            chaptersSection
+                        }
                     }
                     statusView
                 }
