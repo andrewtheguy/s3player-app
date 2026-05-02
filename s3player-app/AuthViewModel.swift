@@ -46,6 +46,11 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
+    deinit {
+        heartbeatTask?.cancel()
+        launchValidationTask?.cancel()
+    }
+
     init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
         self.defaults = defaults
         self.session = session
