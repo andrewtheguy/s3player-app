@@ -66,6 +66,9 @@ struct StationsView: View {
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
         }
+        .navigationDestination(for: MonthRouteKey.self) { key in
+            EpisodesView(show: key.show, year: key.year, month: key.month, auth: auth)
+        }
         .navigationDestination(for: EpisodeRouteKey.self) { key in
             EpisodeDetailView(route: key, auth: auth)
         }
@@ -307,9 +310,6 @@ struct MonthsView: View {
             .navigationTitle(show.name)
             .task { await load() }
             .refreshable { await load() }
-            .navigationDestination(for: MonthRouteKey.self) { key in
-                EpisodesView(show: key.show, year: key.year, month: key.month, auth: auth)
-            }
     }
 
     @ViewBuilder
@@ -377,9 +377,6 @@ struct EpisodesView: View {
             .navigationTitle(monthTitle)
             .task { await load() }
             .refreshable { await load() }
-            .navigationDestination(for: EpisodeRouteKey.self) { key in
-                EpisodeDetailView(route: key, auth: auth)
-            }
     }
 
     @ViewBuilder
@@ -653,10 +650,25 @@ private struct RecentRail: View {
 private struct RecentCard: View {
     let entry: RecentEpisode
     @EnvironmentObject var playback: PlaybackController
+    @EnvironmentObject var navigation: NavigationCoordinator
 
     var body: some View {
-        let synthesized = entry.synthesizedEpisodeAndShow()
-        NavigationLink(value: EpisodeRouteKey(episode: synthesized.episode, show: synthesized.show)) {
+        Button {
+            let synthesized = entry.synthesizedEpisodeAndShow()
+            // Push month then episode so the back button leads to the show's
+            // month view (matching the drill-through path Stations → Shows →
+            // Months → Episodes → EpisodeDetail).
+            let calendar = Calendar(identifier: .gregorian)
+            let components = calendar.dateComponents([.year, .month], from: entry.aired_on)
+            if let year = components.year, let month = components.month {
+                navigation.path.append(
+                    MonthRouteKey(show: synthesized.show, year: year, month: month)
+                )
+            }
+            navigation.path.append(
+                EpisodeRouteKey(episode: synthesized.episode, show: synthesized.show)
+            )
+        } label: {
             content
         }
         .buttonStyle(.plain)

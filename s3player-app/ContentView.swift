@@ -5,11 +5,18 @@
 //  Created by it3 on 5/1/26.
 //
 
+import Combine
 import SwiftUI
+
+@MainActor
+final class NavigationCoordinator: ObservableObject {
+    @Published var path = NavigationPath()
+}
 
 struct ContentView: View {
     @ObservedObject var auth: AuthViewModel
     @StateObject private var playback: PlaybackController
+    @StateObject private var navigation = NavigationCoordinator()
 
     init(auth: AuthViewModel) {
         self.auth = auth
@@ -18,7 +25,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavigationStack {
+            NavigationStack(path: $navigation.path) {
                 StationsView(auth: auth)
                     .toolbar {
                         ToolbarItem(placement: .primaryAction) {
@@ -33,6 +40,7 @@ struct ContentView: View {
             }
         }
         .environmentObject(playback)
+        .environmentObject(navigation)
         .sheet(isPresented: $playback.isExpanded) {
             NowPlayingSheet(controller: playback)
                 #if os(iOS)
