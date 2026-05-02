@@ -67,6 +67,12 @@ struct NowPlayingSheet: View {
             .task(id: controller.currentEpisode?.id) {
                 await loadChapters(for: controller.currentEpisode?.id)
             }
+            .onChange(of: controller.sessionState) { _, newState in
+                // Refetch chapters when the session is (re)claimed so any
+                // server-side edits land at the same moment we sync position.
+                guard newState == .active else { return }
+                Task { await loadChapters(for: controller.currentEpisode?.id) }
+            }
         }
     }
 
