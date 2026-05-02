@@ -509,16 +509,29 @@ private struct EpisodeDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-                playButton
+                if isCurrentlyPlaying {
+                    Label("Now Playing", systemImage: "waveform")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                } else {
+                    playButton
 
-                if let savedPositionText {
-                    Label(savedPositionText, systemImage: "clock.arrow.circlepath")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    if let savedPositionText {
+                        Label(savedPositionText, systemImage: "clock.arrow.circlepath")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 8)
         }
+    }
+
+    private var isCurrentlyPlaying: Bool {
+        playback.currentEpisode?.id == displayedEpisode.id
     }
 
     private var playButton: some View {
