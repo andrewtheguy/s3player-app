@@ -45,8 +45,7 @@ final class PlaybackController: ObservableObject {
                 guard let self else { return }
                 if newToken == nil,
                    self.sessionState == .active || self.sessionState == .activating {
-                    self.sessionState = .displaced
-                    if self.player.isPlaying { self.player.togglePlayback() }
+                    self.handleDisplacement()
                 }
             }
             .store(in: &cancellables)
@@ -183,23 +182,14 @@ final class PlaybackController: ObservableObject {
     // MARK: - Session transitions
 
     private func activateAndPlay() async {
-        guard let client = APIClient(auth: auth) else { return }
-        sessionState = .activating
-        loadError = nil
-        do {
-            let claim = try await client.claimSession()
-            auth.setPlayerSessionToken(claim.session_token)
-            sessionState = .active
-            player.togglePlayback()
-        } catch APIError.unauthorized {
-            auth.logout()
-        } catch {
-            sessionState = .inactive
-            loadError = errorMessage(error)
-        }
+        await claimSessionAndPlay(fallbackState: .inactive)
     }
 
     private func takeOver() async {
+        await claimSessionAndPlay(fallbackState: .displaced)
+    }
+
+    private func claimSessionAndPlay(fallbackState: SessionState) async {
         guard let client = APIClient(auth: auth) else { return }
         sessionState = .activating
         loadError = nil
@@ -211,13 +201,15 @@ final class PlaybackController: ObservableObject {
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
-            sessionState = .displaced
+            sessionState = fallbackState
             loadError = errorMessage(error)
         }
     }
 
     private func handleDisplacement() {
-        auth.setPlayerSessionToken(nil)
+        if auth.playerSessionToken != nil {
+            auth.setPlayerSessionToken(nil)
+        }
         sessionState = .displaced
         if player.isPlaying { player.togglePlayback() }
     }
@@ -240,7 +232,7 @@ final class PlaybackController: ObservableObject {
         progressTask = nil
     }
 
-    func saveProgressIfActive() async {
+    private func saveProgressIfActive() async {
         guard sessionState == .active else { return }
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
@@ -318,10 +310,3 @@ private let nowPlayingDateFormatter: DateFormatter = {
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter
 }()
-
-private func errorMessage(_ error: Error) -> String {
-    if let apiError = error as? APIError {
-        return apiError.errorDescription ?? "Request failed."
-    }
-    return error.localizedDescription
-}
