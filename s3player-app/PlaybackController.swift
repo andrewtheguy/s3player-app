@@ -182,6 +182,9 @@ final class PlaybackController: ObservableObject {
                 artist: show.name
             )
             lastSavedPositionMs = resumePositionMs
+            if sessionState == .active, !player.isPlaying {
+                player.togglePlayback()
+            }
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
