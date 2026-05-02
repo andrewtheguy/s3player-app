@@ -10,23 +10,17 @@ import SwiftUI
 struct MiniNowPlayingBar: View {
     @ObservedObject var controller: PlaybackController
     @ObservedObject var player: AudioPlayerViewModel
+    let show: ShowDetail
 
-    init(controller: PlaybackController) {
+    init(controller: PlaybackController, show: ShowDetail) {
         self.controller = controller
         self.player = controller.player
+        self.show = show
     }
 
     var body: some View {
-        if controller.currentEpisode != nil, let show = controller.currentShow {
-            content(show: show)
-        } else {
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private func content(show: ShowDetail) -> some View {
         VStack(spacing: 0) {
+            Divider()
             progressBar
             HStack(spacing: 12) {
                 Button {
@@ -61,18 +55,7 @@ struct MiniNowPlayingBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.regularMaterial)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: Color.black.opacity(0.08), radius: 12, y: 4)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        .background(.background, ignoresSafeAreaEdges: .bottom)
     }
 
     private var progressBar: some View {

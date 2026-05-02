@@ -58,6 +58,25 @@ struct Episode: Decodable, Hashable, Identifiable {
     let chapters: [Chapter]?
 }
 
+struct EpisodeDetail: Decodable, Hashable, Identifiable {
+    let id: Int
+    let aired_on: Date
+    let time_slot: String?
+    let s3_key: String
+    let chapters: [Chapter]?
+    let show: ShowDetail
+
+    var episode: Episode {
+        Episode(
+            id: id,
+            aired_on: aired_on,
+            time_slot: time_slot,
+            s3_key: s3_key,
+            chapters: chapters
+        )
+    }
+}
+
 struct EpisodesResponse: Decodable {
     let show: ShowDetail
     let episodes: [Episode]

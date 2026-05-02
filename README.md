@@ -42,10 +42,12 @@ The first screen asks for **Host** and **Password**. Host is the backend base UR
   - **Stations** — list rows linking into the per-station show list.
   - Rails refresh whenever the home screen reappears (e.g. when popping back from the player); pull-to-refresh refreshes everything.
 - Drilling: `ShowsView` → `MonthsView` (year-grouped sections, months as `01`…`12`) → `EpisodesView` (rows with `yyyy-MM-dd` date + `HH:MM–HH:MM` time slot).
-- Tap any episode (in a list or on a rail) to open the player.
+- Tapping an episode in `EpisodesView` opens an episode details screen first, which loads chapter data from `GET /api/shows/episodes/{id}` and exposes a **Play Episode** CTA.
+- Tapping a Home rail card still swaps straight into the player.
 
 ### Player
 
+- The episode details screen calls `GET /api/shows/episodes/{id}` to show chapter metadata before playback starts.
 - Calls `GET /api/shows/episodes/{id}/audio_url` for a presigned S3 URL and feeds it to `AVPlayer`.
 - Reads `GET /api/player/episodes/{id}/progress` on entry; if not completed, auto-seeks to the saved position.
 - Transport controls: `−15s` / Play-Pause / `+30s`, plus a draggable scrubber and elapsed-of-total time.
@@ -69,7 +71,7 @@ The backend allows exactly one active player session at a time. The app:
 | `s3player-app/AuthViewModel.swift` | Bearer token + player session token storage; launch-time validation with timeout + retry/clear UI; 30s heartbeat. |
 | `s3player-app/LoginView.swift` | Host + password form, `POST /api/auth/login`. |
 | `s3player-app/ContentView.swift` | Root `NavigationStack`. Single `EpisodeRouteKey` destination. |
-| `s3player-app/BrowseViews.swift` | `StationsView` (with rails), `ShowsView`, `MonthsView`, `EpisodesView`, `RecentRail`, `RecentCard`. |
+| `s3player-app/BrowseViews.swift` | `StationsView` (with rails), `ShowsView`, `MonthsView`, `EpisodesView`, `EpisodeDetailView`, `RecentRail`, `RecentCard`. |
 | `s3player-app/PlayerView.swift` | Per-episode UI, session state machine (`inactive` / `activating` / `active` / `displaced`), progress lifecycle. |
 | `s3player-app/AudioPlayerViewModel.swift` | `AVPlayer` wrapper: prepare/seek/skip, KVO, periodic time observer, MediaPlayer integration, remote command targets. |
 | `s3player-app/CatalogModels.swift` | `Decodable` schemas for the s3player API; `formatTimeSlot`. |
@@ -87,6 +89,7 @@ All routes use `Authorization: Bearer <site-token>`. Session-protected routes ad
 | `GET` | `/api/shows/stations/{station}/shows` | Per-station shows. |
 | `GET` | `/api/shows/{show_id}/months` | Year+month buckets (years derived client-side). |
 | `GET` | `/api/shows/{show_id}/months/{year}/{month}/episodes` | Episodes in a month. |
+| `GET` | `/api/shows/episodes/{id}` | Episode details + chapter metadata for the pre-play details screen. |
 | `GET` | `/api/shows/episodes/{id}/audio_url` | Presigned S3 URL. |
 | `GET` | `/api/player/episodes/{id}/progress` | Resume offset on entry. |
 | `POST` | `/api/player/session/claim` | Take over the single active session. |

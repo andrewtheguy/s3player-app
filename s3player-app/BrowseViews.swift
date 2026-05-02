@@ -289,6 +289,11 @@ struct MonthRouteKey: Hashable {
     let month: Int
 }
 
+struct EpisodeRouteKey: Hashable {
+    let episode: Episode
+    let show: ShowDetail
+}
+
 struct MonthsView: View {
     let show: ShowDetail
     @ObservedObject var auth: AuthViewModel
@@ -362,7 +367,6 @@ struct EpisodesView: View {
     let year: Int
     let month: Int
     @ObservedObject var auth: AuthViewModel
-    @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<[Episode]> = .idle
 
     var body: some View {
@@ -370,6 +374,9 @@ struct EpisodesView: View {
             .navigationTitle(monthTitle)
             .task { await load() }
             .refreshable { await load() }
+            .navigationDestination(for: EpisodeRouteKey.self) { key in
+                EpisodeDetailView(route: key, auth: auth)
+            }
     }
 
     @ViewBuilder
@@ -383,12 +390,9 @@ struct EpisodesView: View {
             EmptyStateView(message: "No episodes in this month.")
         case .loaded(let episodes):
             List(episodes) { episode in
-                Button {
-                    playback.play(episode: episode, show: show)
-                } label: {
+                NavigationLink(value: EpisodeRouteKey(episode: episode, show: show)) {
                     EpisodeRow(episode: episode)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -439,6 +443,187 @@ private struct EpisodeRow: View {
 
     private func formattedDate(_ date: Date) -> String {
         DateFormatter.sharedISODate.string(from: date)
+    }
+}
+
+private struct EpisodeDetailView: View {
+    let route: EpisodeRouteKey
+    @ObservedObject var auth: AuthViewModel
+    @EnvironmentObject var playback: PlaybackController
+    @State private var state: LoadState<EpisodeDetail> = .idle
+    @State private var savedProgress: ProgressResponse?
+
+    var body: some View {
+        List {
+            summarySection
+            detailsSections
+        }
+        .navigationTitle("Episode")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .task(id: route.episode.id) { await load() }
+        .refreshable { await load() }
+    }
+
+    private var displayedEpisode: Episode {
+        switch state {
+        case .loaded(let detail):
+            return detail.episode
+        default:
+            return route.episode
+        }
+    }
+
+    private var displayedShow: ShowDetail {
+        switch state {
+        case .loaded(let detail):
+            return detail.show
+        default:
+            return route.show
+        }
+    }
+
+    private var summarySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayedShow.name)
+                        .font(.title2.weight(.bold))
+                        .lineLimit(2)
+
+                    Text(DateFormatter.sharedISODate.string(from: displayedEpisode.aired_on))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                    Text(displayedShow.station)
+                    let slot = formatTimeSlot(displayedEpisode.time_slot)
+                    if !slot.isEmpty {
+                        Text("·")
+                        Text(slot)
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+                playButton
+
+                if let savedPositionText {
+                    Label(savedPositionText, systemImage: "clock.arrow.circlepath")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var playButton: some View {
+        Button {
+            playback.play(episode: displayedEpisode, show: displayedShow)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                Text(playButtonTitle)
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+    }
+
+    private var playButtonTitle: String {
+        if let savedProgress, !savedProgress.completed, savedProgress.position_ms > 0 {
+            return "Resume"
+        }
+        return "Play Episode"
+    }
+
+    private var savedPositionText: String? {
+        guard let savedProgress, !savedProgress.completed, savedProgress.position_ms > 0 else {
+            return nil
+        }
+
+        if let durationMs = savedProgress.duration_ms, durationMs > 0 {
+            return "Saved position \(formatMs(savedProgress.position_ms)) / \(formatMs(durationMs))"
+        }
+
+        return "Saved position \(formatMs(savedProgress.position_ms))"
+    }
+
+    @ViewBuilder
+    private var detailsSections: some View {
+        switch state {
+        case .idle, .loading:
+            Section("Details") {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading episode details…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .failed(let message):
+            Section("Details") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await load() } }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 4)
+            }
+        case .loaded(let detail):
+            Section("Chapters") {
+                if let chapters = detail.chapters, !chapters.isEmpty {
+                    ForEach(chapters, id: \.self) { chapter in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(chapter.title)
+                                .font(.body)
+                            Text("\(formatMs(chapter.start)) - \(formatMs(chapter.end))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                } else {
+                    Text("No chapter info available for this episode.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func load() async {
+        guard let client = APIClient(auth: auth) else {
+            state = .failed("Not signed in.")
+            return
+        }
+
+        state = .loading
+        savedProgress = nil
+        do {
+            async let detailRequest = client.getEpisodeDetail(episodeId: route.episode.id)
+            async let progressRequest = client.getProgress(episodeId: route.episode.id)
+
+            state = .loaded(try await detailRequest)
+
+            do {
+                savedProgress = try await progressRequest
+            } catch APIError.unauthorized {
+                auth.logout()
+            } catch {
+                savedProgress = nil
+            }
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            state = .failed(errorMessage(error))
+        }
     }
 }
 
