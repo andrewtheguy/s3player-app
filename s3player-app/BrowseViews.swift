@@ -452,6 +452,7 @@ private struct EpisodeDetailView: View {
     @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<EpisodeDetail> = .idle
     @State private var savedProgress: ProgressResponse?
+    private static let progressRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
         List {
@@ -462,7 +463,10 @@ private struct EpisodeDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task(id: route.episode.id) { await load() }
+        .task(id: route.episode.id) {
+            await load()
+            await refreshProgressPeriodically()
+        }
         .refreshable { await load() }
     }
 
@@ -636,6 +640,27 @@ private struct EpisodeDetailView: View {
             auth.logout()
         } catch {
             state = .failed(errorMessage(error))
+        }
+    }
+
+    private func refreshProgressPeriodically() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.progressRefreshInterval)
+            if Task.isCancelled { return }
+            await refreshProgress()
+        }
+    }
+
+    private func refreshProgress() async {
+        guard let client = APIClient(auth: auth) else { return }
+        do {
+            // Background tick: keep prior savedProgress on transient errors so the
+            // UI doesn't flicker between a known state and "not loaded yet".
+            savedProgress = try await client.getProgress(episodeId: route.episode.id)
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            // Transient: keep existing savedProgress.
         }
     }
 }
