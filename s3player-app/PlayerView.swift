@@ -71,9 +71,10 @@ struct PlayerView: View {
         }
         .onDisappear {
             stopProgressTimer()
-            let task = Task { await saveProgressIfActive() }
-            // Detach final write so it can finish after the view disappears.
-            _ = task
+            // Snapshot position before player.stop() resets elapsedTime to 0; the detached Task captures these values.
+            let positionMs = max(0, Int(player.elapsedTime * 1000))
+            let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+            Task { await saveProgress(positionMs: positionMs, durationMs: durationMs) }
             player.stop()
         }
     }
@@ -316,12 +317,17 @@ struct PlayerView: View {
     }
 
     private func saveProgressIfActive() async {
+        guard sessionState == .active else { return }
+        let positionMs = max(0, Int(player.elapsedTime * 1000))
+        let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+        await saveProgress(positionMs: positionMs, durationMs: durationMs)
+    }
+
+    private func saveProgress(positionMs: Int, durationMs: Int?) async {
         guard sessionState == .active,
               let token = auth.playerSessionToken,
               let client = APIClient(auth: auth) else { return }
-        let positionMs = max(0, Int(player.elapsedTime * 1000))
         if positionMs == lastSavedPositionMs { return }
-        let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
         do {
             try await client.saveProgress(
                 episodeId: episode.id,

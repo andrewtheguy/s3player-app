@@ -16,6 +16,7 @@ enum APIError: Error, LocalizedError {
     case http(Int)
     case transport(URLError)
     case decoding(DecodingError)
+    case encoding(EncodingError)
 
     var errorDescription: String? {
         switch self {
@@ -27,6 +28,7 @@ enum APIError: Error, LocalizedError {
         case .http(let code): return "Request failed (HTTP \(code))."
         case .transport(let error): return error.localizedDescription
         case .decoding: return "Could not parse server response."
+        case .encoding: return "Could not encode request body."
         }
     }
 }
@@ -123,7 +125,7 @@ struct APIClient {
     }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        let request = makeRequest(path: path, method: "GET", body: Optional<Empty>.none, playerSessionToken: nil)
+        let request = try makeRequest(path: path, method: "GET", body: Optional<Empty>.none, playerSessionToken: nil)
         return try await execute(request)
     }
 
@@ -132,7 +134,7 @@ struct APIClient {
         body: Body?,
         playerSessionToken: String?
     ) async throws -> T {
-        let request = makeRequest(path: path, method: "POST", body: body, playerSessionToken: playerSessionToken)
+        let request = try makeRequest(path: path, method: "POST", body: body, playerSessionToken: playerSessionToken)
         return try await execute(request)
     }
 
@@ -141,7 +143,7 @@ struct APIClient {
         method: String,
         body: Body?,
         playerSessionToken: String?
-    ) -> URLRequest {
+    ) throws -> URLRequest {
         let url = host.appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -152,7 +154,11 @@ struct APIClient {
         }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONEncoder().encode(body)
+            do {
+                request.httpBody = try JSONEncoder().encode(body)
+            } catch let error as EncodingError {
+                throw APIError.encoding(error)
+            }
         }
         return request
     }
@@ -172,6 +178,7 @@ struct APIClient {
 
         switch http.statusCode {
         case 200:
+            // EmptyResponse.init(from:) ignores its payload; the "{}" substitution feeds JSONDecoder a valid top-level value when the body is empty.
             if T.self == EmptyResponse.self || data.isEmpty {
                 return try decoder.decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)
             }
