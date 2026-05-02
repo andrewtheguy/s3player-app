@@ -19,12 +19,17 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var isLoggingIn = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var isValidatingPlayerSession = false
+    @Published private(set) var playerSessionValidationError: String?
     @Published private(set) var playerSessionToken: String?
 
     private let defaults: UserDefaults
     private let session: URLSession
     private var heartbeatTask: Task<Void, Never>?
+    private var launchValidationTask: Task<Void, Never>?
     private static let heartbeatInterval: UInt64 = 30 * 1_000_000_000
+    private static let launchValidateTimeout: UInt64 = 8 * 1_000_000_000
+
+    private struct LaunchValidateTimedOut: Error {}
 
     private enum Keys {
         static let host = "auth.host"
@@ -56,11 +61,33 @@ final class AuthViewModel: ObservableObject {
 
         // Block UI on a launch-time validate so a stale rehydrated player session token resolves before any browse / playback action runs.
         if storedHost != nil, storedToken != nil, storedPlayerToken != nil {
-            self.isValidatingPlayerSession = true
-            Task { await self.validateStoredPlayerSession() }
+            startLaunchValidation()
         }
 
         startHeartbeat()
+    }
+
+    func retryPlayerSessionValidation() {
+        guard playerSessionToken != nil else {
+            playerSessionValidationError = nil
+            return
+        }
+        startLaunchValidation()
+    }
+
+    func clearAndContinuePlayerSession() {
+        launchValidationTask?.cancel()
+        launchValidationTask = nil
+        setPlayerSessionToken(nil)
+        isValidatingPlayerSession = false
+        playerSessionValidationError = nil
+    }
+
+    private func startLaunchValidation() {
+        launchValidationTask?.cancel()
+        isValidatingPlayerSession = true
+        playerSessionValidationError = nil
+        launchValidationTask = Task { await self.validateStoredPlayerSession() }
     }
 
     func validateStoredPlayerSession() async {
@@ -68,13 +95,30 @@ final class AuthViewModel: ObservableObject {
         guard let client = APIClient(auth: self),
               let playerToken = playerSessionToken else { return }
         do {
-            try await client.validateSession(playerToken: playerToken)
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await client.validateSession(playerToken: playerToken)
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: Self.launchValidateTimeout)
+                    throw LaunchValidateTimedOut()
+                }
+                try await group.next()
+                group.cancelAll()
+            }
+            playerSessionValidationError = nil
+        } catch is LaunchValidateTimedOut {
+            playerSessionValidationError = "The server didn't respond in time."
         } catch APIError.sessionDisplaced {
+            // Authoritative "stale" signal — clear silently and proceed; no need to prompt.
             setPlayerSessionToken(nil)
+            playerSessionValidationError = nil
         } catch APIError.unauthorized {
             logout()
+            playerSessionValidationError = nil
         } catch {
-            // Transient network/server failure: keep the token; subsequent player calls will surface displacement on 409.
+            playerSessionValidationError = (error as? APIError)?.errorDescription
+                ?? error.localizedDescription
         }
     }
 

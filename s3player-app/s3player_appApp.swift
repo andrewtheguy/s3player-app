@@ -14,8 +14,8 @@ struct s3player_appApp: App {
     var body: some Scene {
         WindowGroup {
             if auth.isAuthenticated {
-                if auth.isValidatingPlayerSession {
-                    SessionValidationView()
+                if auth.isValidatingPlayerSession || auth.playerSessionValidationError != nil {
+                    SessionValidationView(auth: auth)
                 } else {
                     ContentView(auth: auth)
                 }
@@ -27,7 +27,21 @@ struct s3player_appApp: App {
 }
 
 private struct SessionValidationView: View {
+    @ObservedObject var auth: AuthViewModel
+
     var body: some View {
+        VStack(spacing: 24) {
+            if let error = auth.playerSessionValidationError {
+                failureView(message: error)
+            } else {
+                progressView
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var progressView: some View {
         VStack(spacing: 16) {
             ProgressView()
                 .controlSize(.large)
@@ -35,6 +49,40 @@ private struct SessionValidationView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func failureView(message: String) -> some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.largeTitle)
+                    .foregroundStyle(.orange)
+                Text("Couldn't restore your playback session")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: 12) {
+                Button(action: auth.retryPlayerSessionValidation) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(auth.isValidatingPlayerSession)
+
+                Button(action: auth.clearAndContinuePlayerSession) {
+                    Label("Clear and Continue", systemImage: "xmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+            .frame(maxWidth: 320)
+        }
     }
 }

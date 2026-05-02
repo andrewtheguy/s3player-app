@@ -344,17 +344,17 @@ struct PlayerView: View {
     }
 
     private func formattedDate(_ date: Date) -> String {
-        airedOnFormatter.string(from: date)
+        Self.airedOnFormatter.string(from: date)
     }
 
-    private var airedOnFormatter: DateFormatter {
+    private static let airedOnFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .iso8601)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
-    }
+    }()
 
     private var groupedBackground: Color {
         #if os(macOS)
