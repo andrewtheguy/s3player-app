@@ -305,7 +305,7 @@ struct MonthsView: View {
             List {
                 ForEach(grouped.keys.sorted(by: >), id: \.self) { year in
                     Section(String(year)) {
-                        let months = (grouped[year] ?? []).sorted { $0.month > $1.month }
+                        let months = (grouped[year] ?? []).sorted { $0.month < $1.month }
                         ForEach(months, id: \.self) { bucket in
                             NavigationLink(
                                 value: MonthRouteKey(show: show, year: bucket.year, month: bucket.month)
