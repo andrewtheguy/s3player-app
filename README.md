@@ -98,20 +98,32 @@ All routes use `Authorization: Bearer <site-token>`. Session-protected routes ad
 
 ## Distribution
 
-Archive in Xcode (`Product → Archive`) then export development `.ipa`:
+Create an iOS device archive, then export a development `.ipa`:
 
 ```sh
-xcodebuild -exportArchive \
-  -archivePath /path/to/s3player-app.xcarchive \
-  -exportPath /path/to/output \
-  -exportOptionsPlist ExportOptions.plist
+scripts/archive-ios.sh
+scripts/export-archive.sh
 ```
 
-Where `ExportOptions.plist` sets `method = development` (or `app-store` / `ad-hoc` per your distribution path) and `teamID` to your developer team. Install on a paired device:
+The archive script writes an iOS-only archive to `./build/s3player-app.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`. The export script generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, then exports into `./build/export`.
+
+Use flags when you need an explicit team ID, explicit paths, or another export method:
+
+```sh
+scripts/archive-ios.sh <TEAM_ID> \
+  --archive-path /path/to/s3player-app.xcarchive
+
+scripts/export-archive.sh <TEAM_ID> \
+  --archive-path /path/to/s3player-app.xcarchive \
+  --export-path /path/to/output \
+  --method debugging
+```
+
+Install on a paired device:
 
 ```sh
 xcrun devicectl list devices
-xcrun devicectl device install app --device <ID> /path/to/output/s3player-app.ipa
+xcrun devicectl device install app --device <ID> ./build/export/s3player-app.ipa
 ```
 
-Hardened Runtime is enabled in both Debug and Release configs so the macOS archive passes notarization. No special entitlements are needed (no JIT, microphone, camera, etc.).
+This script flow is for iOS device `.ipa` builds only. For macOS archives, use Xcode (`Product → Archive`) and export from Organizer.
