@@ -13,6 +13,7 @@ struct NowPlayingSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scrubberProgress: Double = 0
     @State private var isScrubbing = false
+    @State private var chapters: [Chapter] = []
 
     init(controller: PlaybackController) {
         self.controller = controller
@@ -29,6 +30,9 @@ struct NowPlayingSheet: View {
                     playbackControls
                     if controller.sessionState == .active {
                         progressView
+                    }
+                    if !chapters.isEmpty {
+                        chaptersSection
                     }
                     statusView
                 }
@@ -58,7 +62,74 @@ struct NowPlayingSheet: View {
             .onAppear {
                 scrubberProgress = player.progress
             }
+            .task(id: controller.currentEpisode?.id) {
+                await loadChapters(for: controller.currentEpisode?.id)
+            }
         }
+    }
+
+    private func loadChapters(for episodeId: Int?) async {
+        guard let episodeId else {
+            chapters = []
+            return
+        }
+        guard let client = APIClient(auth: controller.auth) else {
+            chapters = []
+            return
+        }
+        do {
+            let detail = try await client.getEpisodeDetail(episodeId: episodeId)
+            chapters = detail.chapters ?? []
+        } catch {
+            chapters = []
+        }
+    }
+
+    private var chaptersSection: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                chapterRow(chapter)
+                if index < chapters.count - 1 {
+                    Divider()
+                }
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.background.secondary)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private func chapterRow(_ chapter: Chapter) -> some View {
+        let elapsedMs = Int(player.elapsedTime * 1000)
+        let isCurrent = elapsedMs >= chapter.start && elapsedMs < chapter.end
+        let rightLabel = isCurrent
+            ? "-\(formatMs(max(0, chapter.end - elapsedMs)))"
+            : formatMs(chapter.end - chapter.start)
+
+        return Button {
+            controller.seek(toMilliseconds: chapter.start)
+        } label: {
+            HStack(spacing: 12) {
+                Text(chapter.title.isEmpty ? formatMs(chapter.start) : chapter.title)
+                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(rightLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(isCurrent ? .primary : .secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(isCurrent ? Color.accentColor.opacity(0.15) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func metadata(show: ShowDetail, episode: Episode) -> some View {
