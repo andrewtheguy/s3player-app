@@ -152,6 +152,27 @@ final class AudioPlayerViewModel: ObservableObject {
         }
     }
 
+    // Update the resume target whether the asset is already ready (seek directly)
+    // or still loading (defer via pendingSeekSeconds, applied on .readyToPlay).
+    func setResumePosition(toSeconds seconds: Double) {
+        let target = max(0, seconds)
+        if let player, hasDuration {
+            let clamped = min(target, max(0, duration - 0.5))
+            let time = CMTime(seconds: clamped, preferredTimescale: 600)
+            pendingSeekSeconds = 0
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.elapsedTime = time.seconds
+                    self?.updateNowPlayingInfo()
+                }
+            }
+        } else {
+            pendingSeekSeconds = target
+            elapsedTime = target
+            updateNowPlayingInfo()
+        }
+    }
+
     func formattedTime(_ time: TimeInterval) -> String {
         guard time.isFinite else { return "--:--" }
 
