@@ -80,6 +80,9 @@ struct NowPlayingSheet: View {
         do {
             let detail = try await client.getEpisodeDetail(episodeId: episodeId)
             chapters = detail.chapters ?? []
+        } catch APIError.unauthorized {
+            controller.auth.logout()
+            chapters = []
         } catch {
             chapters = []
         }
