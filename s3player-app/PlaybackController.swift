@@ -311,16 +311,17 @@ final class PlaybackController: ObservableObject {
         await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: false)
     }
 
-    private func saveProgress(positionMs: Int, durationMs: Int?, completed: Bool) async {
+    @discardableResult
+    private func saveProgress(positionMs: Int, durationMs: Int?, completed: Bool) async -> Bool {
         guard sessionState == .active,
               let episode = currentEpisode,
               let token = auth.playerSessionToken,
               let client = APIClient(auth: auth),
-              !player.playbackUnsupported else { return }
+              !player.playbackUnsupported else { return false }
         // Always allow the completion write through, even if the position has
         // not advanced since the last save (the natural-end tick can land on
         // the same ms as the prior periodic tick).
-        if positionMs == lastSavedPositionMs && !completed { return }
+        if positionMs == lastSavedPositionMs && !completed { return true }
         do {
             try await client.saveProgress(
                 episodeId: episode.id,
@@ -330,12 +331,16 @@ final class PlaybackController: ObservableObject {
                 completed: completed
             )
             lastSavedPositionMs = positionMs
+            return true
         } catch APIError.sessionDisplaced {
             handleDisplacement()
+            return false
         } catch APIError.unauthorized {
             auth.logout()
+            return false
         } catch {
             // Transient: keep playing; the next tick or pause retries.
+            return false
         }
     }
 
@@ -346,12 +351,20 @@ final class PlaybackController: ObservableObject {
               !player.playbackUnsupported else { return }
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
-        await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: true)
-        // Show the replay-confirm gate after a natural end so subsequent
-        // periodic saves (which would carry completed=false) don't silently
-        // overwrite the just-recorded completion under the new
-        // EXCLUDED.completed upsert semantics.
-        replayConfirmNeeded = true
+        // Only flip the replay-confirm gate if the completion write actually
+        // landed. Otherwise a transient failure would gate the UI without the
+        // server knowing the episode is complete, and the gate suppresses
+        // saveProgressIfActive — so the completion would be silently lost.
+        let succeeded = await saveProgress(
+            positionMs: positionMs,
+            durationMs: durationMs,
+            completed: true
+        )
+        if succeeded {
+            replayConfirmNeeded = true
+        } else if sessionState == .active {
+            loadError = "Couldn't mark this episode complete. Tap play to retry."
+        }
     }
 
     // MARK: - Reset
