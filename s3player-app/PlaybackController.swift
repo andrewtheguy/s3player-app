@@ -136,7 +136,9 @@ final class PlaybackController: ObservableObject {
         loadError = nil
         resumePositionMs = 0
         lastSavedPositionMs = -1
-        sessionState = auth.playerSessionToken != nil ? .active : .inactive
+        if sessionState != .displaced {
+            sessionState = auth.playerSessionToken != nil ? .active : .inactive
+        }
         isExpanded = true
 
         await fetchResumeAndPrepare(episode: episode, show: show)
