@@ -48,8 +48,13 @@ struct NowPlayingSheet: View {
                     Button {
                         dismiss()
                     } label: {
+                        #if os(macOS)
+                        Text("Done")
+                            .font(.body.weight(.semibold))
+                        #else
                         Image(systemName: "chevron.down")
                             .font(.body.weight(.semibold))
+                        #endif
                     }
                     .accessibilityLabel("Collapse player")
                 }

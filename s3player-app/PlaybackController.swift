@@ -168,27 +168,21 @@ final class PlaybackController: ObservableObject {
             resumePositionMs = 0
         }
 
-        do {
-            let response = try await client.getAudioURL(episodeId: episode.id)
-            guard let url = URL(string: response.url) else {
-                loadError = "Server returned an invalid audio URL."
-                return
-            }
-            let resumeSeconds = Double(resumePositionMs) / 1000
-            player.prepare(
-                url: url,
-                resumeAtSeconds: resumeSeconds,
-                title: nowPlayingTitle(for: episode),
-                artist: show.name
-            )
-            lastSavedPositionMs = resumePositionMs
-            if sessionState == .active, !player.isPlaying {
-                player.togglePlayback()
-            }
-        } catch APIError.unauthorized {
-            auth.logout()
-        } catch {
-            loadError = errorMessage(error)
+        guard let url = client.audioStreamURL(episodeId: episode.id) else {
+            loadError = "Could not build audio URL."
+            return
+        }
+        let resumeSeconds = Double(resumePositionMs) / 1000
+        player.prepare(
+            url: url,
+            httpHeaders: client.authorizationHeaders,
+            resumeAtSeconds: resumeSeconds,
+            title: nowPlayingTitle(for: episode),
+            artist: show.name
+        )
+        lastSavedPositionMs = resumePositionMs
+        if sessionState == .active, !player.isPlaying {
+            player.togglePlayback()
         }
     }
 
