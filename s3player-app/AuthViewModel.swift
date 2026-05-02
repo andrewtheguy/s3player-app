@@ -18,9 +18,18 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var host: String?
     @Published private(set) var isLoggingIn = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isValidatingPlayerSession = false
+    @Published private(set) var playerSessionValidationError: String?
+    @Published private(set) var playerSessionToken: String?
 
     private let defaults: UserDefaults
     private let session: URLSession
+    private var heartbeatTask: Task<Void, Never>?
+    private var launchValidationTask: Task<Void, Never>?
+    private static let heartbeatInterval: UInt64 = 30 * 1_000_000_000
+    private static let launchValidateTimeout: UInt64 = 8 * 1_000_000_000
+
+    private struct LaunchValidateTimedOut: Error {}
 
     private enum Keys {
         static let host = "auth.host"
@@ -28,15 +37,18 @@ final class AuthViewModel: ObservableObject {
         static let playerSessionToken = "auth.playerSessionToken"
     }
 
-    var playerSessionToken: String? {
-        get { defaults.string(forKey: Keys.playerSessionToken) }
-        set {
-            if let newValue {
-                defaults.set(newValue, forKey: Keys.playerSessionToken)
-            } else {
-                defaults.removeObject(forKey: Keys.playerSessionToken)
-            }
+    func setPlayerSessionToken(_ newValue: String?) {
+        playerSessionToken = newValue
+        if let newValue {
+            defaults.set(newValue, forKey: Keys.playerSessionToken)
+        } else {
+            defaults.removeObject(forKey: Keys.playerSessionToken)
         }
+    }
+
+    deinit {
+        heartbeatTask?.cancel()
+        launchValidationTask?.cancel()
     }
 
     init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
@@ -45,10 +57,99 @@ final class AuthViewModel: ObservableObject {
 
         let storedHost = defaults.string(forKey: Keys.host)
         let storedToken = defaults.string(forKey: Keys.token)
+        let storedPlayerToken = defaults.string(forKey: Keys.playerSessionToken)
 
         self.hostText = storedHost ?? Self.defaultHost
         self.host = storedHost
         self.token = storedToken
+        self.playerSessionToken = storedPlayerToken
+
+        // Block UI on a launch-time validate so a stale rehydrated player session token resolves before any browse / playback action runs.
+        if storedHost != nil, storedToken != nil, storedPlayerToken != nil {
+            startLaunchValidation()
+        }
+
+        startHeartbeat()
+    }
+
+    func retryPlayerSessionValidation() {
+        guard playerSessionToken != nil else {
+            playerSessionValidationError = nil
+            return
+        }
+        startLaunchValidation()
+    }
+
+    func clearAndContinuePlayerSession() {
+        launchValidationTask?.cancel()
+        launchValidationTask = nil
+        setPlayerSessionToken(nil)
+        isValidatingPlayerSession = false
+        playerSessionValidationError = nil
+    }
+
+    private func startLaunchValidation() {
+        launchValidationTask?.cancel()
+        isValidatingPlayerSession = true
+        playerSessionValidationError = nil
+        launchValidationTask = Task { await self.validateStoredPlayerSession() }
+    }
+
+    func validateStoredPlayerSession() async {
+        defer { isValidatingPlayerSession = false }
+        guard let client = APIClient(auth: self),
+              let playerToken = playerSessionToken else { return }
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await client.validateSession(playerToken: playerToken)
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: Self.launchValidateTimeout)
+                    throw LaunchValidateTimedOut()
+                }
+                try await group.next()
+                group.cancelAll()
+            }
+            playerSessionValidationError = nil
+        } catch is LaunchValidateTimedOut {
+            playerSessionValidationError = "The server didn't respond in time."
+        } catch APIError.sessionDisplaced {
+            // Authoritative "stale" signal — clear silently and proceed; no need to prompt.
+            setPlayerSessionToken(nil)
+            playerSessionValidationError = nil
+        } catch APIError.unauthorized {
+            logout()
+            playerSessionValidationError = nil
+        } catch {
+            playerSessionValidationError = (error as? APIError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.heartbeatInterval)
+                if Task.isCancelled { return }
+                await self?.heartbeatValidate()
+            }
+        }
+    }
+
+    private func heartbeatValidate() async {
+        guard let client = APIClient(auth: self),
+              let playerToken = playerSessionToken else { return }
+        do {
+            try await client.validateSession(playerToken: playerToken)
+        } catch APIError.sessionDisplaced {
+            setPlayerSessionToken(nil)
+        } catch APIError.unauthorized {
+            logout()
+        } catch {
+            // Transient: keep token; the next tick retries.
+        }
     }
 
     var isAuthenticated: Bool {
@@ -106,7 +207,7 @@ final class AuthViewModel: ObservableObject {
     func logout() {
         token = nil
         defaults.removeObject(forKey: Keys.token)
-        defaults.removeObject(forKey: Keys.playerSessionToken)
+        setPlayerSessionToken(nil)
         passwordText = ""
         errorMessage = nil
     }
