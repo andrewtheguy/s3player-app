@@ -438,15 +438,19 @@ private struct RecentRail: View {
     let entries: [RecentEpisode]
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(entries) { entry in
-                    RecentCard(entry: entry)
+        GeometryReader { proxy in
+            ScrollView(.horizontal, showsIndicators: true) {
+                LazyHStack(spacing: 12) {
+                    ForEach(entries) { entry in
+                        RecentCard(entry: entry)
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
         }
+        .frame(height: 146)
     }
 }
 
