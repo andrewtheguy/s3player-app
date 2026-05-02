@@ -17,20 +17,22 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            StationsView(auth: auth)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Sign Out") {
-                            auth.logout()
+        VStack(spacing: 0) {
+            NavigationStack {
+                StationsView(auth: auth)
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button("Sign Out") {
+                                auth.logout()
+                            }
                         }
                     }
-                }
+            }
+            if playback.currentEpisode != nil, let show = playback.currentShow {
+                MiniNowPlayingBar(controller: playback, show: show)
+            }
         }
         .environmentObject(playback)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            MiniNowPlayingBar(controller: playback)
-        }
         .sheet(isPresented: $playback.isExpanded) {
             NowPlayingSheet(controller: playback)
                 #if os(iOS)
