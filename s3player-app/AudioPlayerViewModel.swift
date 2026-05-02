@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import MediaPlayer
 
 @MainActor
 final class AudioPlayerViewModel: ObservableObject {
@@ -24,6 +25,9 @@ final class AudioPlayerViewModel: ObservableObject {
     private var itemDurationObservation: NSKeyValueObservation?
     private var playbackEndObserver: NSObjectProtocol?
     private var pendingSeekSeconds: Double = 0
+    private var nowPlayingTitle: String?
+    private var nowPlayingArtist: String?
+    private var didConfigureRemoteCommands = false
 
     var hasLoadedAudio: Bool {
         player != nil
@@ -38,7 +42,7 @@ final class AudioPlayerViewModel: ObservableObject {
         return min(max(elapsedTime / duration, 0), 1)
     }
 
-    func prepare(url: URL, resumeAtSeconds: Double = 0) {
+    func prepare(url: URL, resumeAtSeconds: Double = 0, title: String, artist: String) {
         stop()
         guard configureAudioSession() else { return }
 
@@ -47,12 +51,16 @@ final class AudioPlayerViewModel: ObservableObject {
         self.player = player
         pendingSeekSeconds = max(0, resumeAtSeconds)
         elapsedTime = pendingSeekSeconds
+        nowPlayingTitle = title
+        nowPlayingArtist = artist
         isLoading = true
         hasFinishedPlayback = false
         statusMessage = "Loading audio..."
 
         observe(item: item)
         addPeriodicTimeObserver(to: player)
+        configureRemoteCommandsIfNeeded()
+        updateNowPlayingInfo()
     }
 
     func togglePlayback() {
@@ -67,6 +75,7 @@ final class AudioPlayerViewModel: ObservableObject {
             isPlaying = true
             statusMessage = "Playing."
         }
+        updateNowPlayingInfo()
     }
 
     func stop() {
@@ -89,6 +98,9 @@ final class AudioPlayerViewModel: ObservableObject {
         duration = 0
         pendingSeekSeconds = 0
         hasFinishedPlayback = false
+        nowPlayingTitle = nil
+        nowPlayingArtist = nil
+        clearNowPlayingInfo()
     }
 
     func seek(to progress: Double) {
@@ -100,6 +112,19 @@ final class AudioPlayerViewModel: ObservableObject {
         player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.elapsedTime = targetTime.seconds
+                self?.updateNowPlayingInfo()
+            }
+        }
+    }
+
+    func skip(by seconds: Double) {
+        guard hasDuration, let player else { return }
+        let target = max(0, min(duration - 0.5, elapsedTime + seconds))
+        let targetTime = CMTime(seconds: target, preferredTimescale: 600)
+        player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.elapsedTime = targetTime.seconds
+                self?.updateNowPlayingInfo()
             }
         }
     }
@@ -144,6 +169,7 @@ final class AudioPlayerViewModel: ObservableObject {
         itemDurationObservation = item.observe(\.duration, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor [weak self] in
                 self?.duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
+                self?.updateNowPlayingInfo()
             }
         }
 
@@ -156,6 +182,7 @@ final class AudioPlayerViewModel: ObservableObject {
                 self?.isPlaying = false
                 self?.statusMessage = "Finished."
                 self?.hasFinishedPlayback = true
+                self?.updateNowPlayingInfo()
             }
         }
     }
@@ -167,10 +194,12 @@ final class AudioPlayerViewModel: ObservableObject {
             duration = item.duration.seconds.isFinite ? item.duration.seconds : 0
             applyPendingSeekIfNeeded()
             statusMessage = isPlaying ? "Playing." : "Ready to play."
+            updateNowPlayingInfo()
         case .failed:
             isLoading = false
             isPlaying = false
             statusMessage = item.error?.localizedDescription ?? "Unable to play this audio."
+            updateNowPlayingInfo()
         case .unknown:
             break
         @unknown default:
@@ -196,6 +225,7 @@ final class AudioPlayerViewModel: ObservableObject {
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.elapsedTime = target.seconds
+                self?.updateNowPlayingInfo()
             }
         }
     }
@@ -206,5 +236,98 @@ final class AudioPlayerViewModel: ObservableObject {
         }
 
         playbackEndObserver = nil
+    }
+
+    private func configureRemoteCommandsIfNeeded() {
+        guard !didConfigureRemoteCommands else { return }
+        didConfigureRemoteCommands = true
+
+        let center = MPRemoteCommandCenter.shared()
+
+        center.playCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            return self.handleRemotePlay()
+        }
+        center.pauseCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            return self.handleRemotePause()
+        }
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self, self.player != nil else { return .commandFailed }
+            self.togglePlayback()
+            return .success
+        }
+
+        center.skipBackwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.addTarget { [weak self] _ in
+            guard let self, self.player != nil else { return .commandFailed }
+            self.skip(by: -15)
+            return .success
+        }
+        center.skipForwardCommand.preferredIntervals = [30]
+        center.skipForwardCommand.addTarget { [weak self] _ in
+            guard let self, self.player != nil else { return .commandFailed }
+            self.skip(by: 30)
+            return .success
+        }
+
+        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard
+                let self,
+                let event = event as? MPChangePlaybackPositionCommandEvent,
+                let player = self.player,
+                self.hasDuration
+            else { return .commandFailed }
+            let target = CMTime(seconds: event.positionTime, preferredTimescale: 600)
+            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.elapsedTime = target.seconds
+                    self?.updateNowPlayingInfo()
+                }
+            }
+            return .success
+        }
+    }
+
+    private func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
+        guard let player else { return .commandFailed }
+        if !isPlaying {
+            player.play()
+            isPlaying = true
+            statusMessage = "Playing."
+            updateNowPlayingInfo()
+        }
+        return .success
+    }
+
+    private func handleRemotePause() -> MPRemoteCommandHandlerStatus {
+        guard let player else { return .commandFailed }
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+            statusMessage = "Paused."
+            updateNowPlayingInfo()
+        }
+        return .success
+    }
+
+    private func updateNowPlayingInfo() {
+        var info: [String: Any] = [:]
+        if let nowPlayingTitle {
+            info[MPMediaItemPropertyTitle] = nowPlayingTitle
+        }
+        if let nowPlayingArtist {
+            info[MPMediaItemPropertyArtist] = nowPlayingArtist
+        }
+        if hasDuration {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsedTime
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func clearNowPlayingInfo() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 }

@@ -138,16 +138,40 @@ struct PlayerView: View {
             .controlSize(.large)
             .disabled(true)
         case .active:
-            Button(action: handlePlayTap) {
-                Label(
-                    player.isPlaying ? "Pause" : "Play",
-                    systemImage: player.isPlaying ? "pause.fill" : "play.fill"
-                )
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 16) {
+                Button {
+                    player.skip(by: -15)
+                } label: {
+                    Image(systemName: "gobackward.15")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(!player.hasDuration)
+
+                Button(action: handlePlayTap) {
+                    Label(
+                        player.isPlaying ? "Pause" : "Play",
+                        systemImage: player.isPlaying ? "pause.fill" : "play.fill"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!player.hasLoadedAudio || player.isLoading)
+
+                Button {
+                    player.skip(by: 30)
+                } label: {
+                    Image(systemName: "goforward.30")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(!player.hasDuration)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!player.hasLoadedAudio || player.isLoading)
         }
     }
 
@@ -225,7 +249,12 @@ struct PlayerView: View {
                 return
             }
             let resumeSeconds = Double(resumePositionMs) / 1000
-            player.prepare(url: url, resumeAtSeconds: resumeSeconds)
+            player.prepare(
+                url: url,
+                resumeAtSeconds: resumeSeconds,
+                title: nowPlayingTitle,
+                artist: show.name
+            )
             lastSavedPositionMs = resumePositionMs
         } catch APIError.unauthorized {
             auth.logout()
@@ -345,6 +374,12 @@ struct PlayerView: View {
 
     private func formattedDate(_ date: Date) -> String {
         Self.airedOnFormatter.string(from: date)
+    }
+
+    private var nowPlayingTitle: String {
+        let date = Self.airedOnFormatter.string(from: episode.aired_on)
+        let slot = formatTimeSlot(episode.time_slot)
+        return slot.isEmpty ? date : "\(date) · \(slot)"
     }
 
     private static let airedOnFormatter: DateFormatter = {
