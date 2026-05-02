@@ -75,6 +75,7 @@ struct StationsView: View {
             }
         }
         .refreshable { await loadAll() }
+        .appToolbar(auth: auth)
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
         }
@@ -288,6 +289,7 @@ struct ShowsView: View {
             .navigationTitle(station)
             .task { await load() }
             .refreshable { await load() }
+            .appToolbar(auth: auth)
             .navigationDestination(for: Show.self) { show in
                 MonthsView(
                     show: ShowDetail(
@@ -362,6 +364,7 @@ struct MonthsView: View {
             .navigationTitle(show.name)
             .task { await load() }
             .refreshable { await load() }
+            .appToolbar(auth: auth)
     }
 
     @ViewBuilder
@@ -429,6 +432,7 @@ struct EpisodesView: View {
             .navigationTitle(monthTitle)
             .task { await load() }
             .refreshable { await load() }
+            .appToolbar(auth: auth)
     }
 
     @ViewBuilder
@@ -515,6 +519,7 @@ private struct EpisodeDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .appToolbar(auth: auth)
         .task(id: route.episode.id) {
             await load()
             await refreshProgressPeriodically()
