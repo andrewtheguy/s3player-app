@@ -10,8 +10,6 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
-    static let defaultHost = "https://s3player.local.168234.xyz"
-
     @Published var hostText: String
     @Published var passwordText = ""
     @Published private(set) var token: String?
@@ -59,7 +57,7 @@ final class AuthViewModel: ObservableObject {
         let storedToken = defaults.string(forKey: Keys.token)
         let storedPlayerToken = defaults.string(forKey: Keys.playerSessionToken)
 
-        self.hostText = storedHost ?? Self.defaultHost
+        self.hostText = storedHost ?? ""
         self.host = storedHost
         self.token = storedToken
         self.playerSessionToken = storedPlayerToken
