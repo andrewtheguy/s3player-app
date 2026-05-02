@@ -111,11 +111,10 @@ struct NowPlayingSheet: View {
                 .disabled(!player.hasDuration)
 
                 Button { controller.togglePlayback() } label: {
-                    Label(
-                        player.isPlaying ? "Pause" : "Play",
-                        systemImage: player.isPlaying ? "pause.fill" : "play.fill"
-                    )
-                    .frame(maxWidth: .infinity)
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
