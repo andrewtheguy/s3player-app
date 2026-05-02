@@ -451,6 +451,7 @@ private struct EpisodeDetailView: View {
     @ObservedObject var auth: AuthViewModel
     @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<EpisodeDetail> = .idle
+    @State private var savedProgress: ProgressResponse?
 
     var body: some View {
         List {
@@ -501,9 +502,27 @@ private struct EpisodeDetailView: View {
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+                if let savedPositionText {
+                    Label(savedPositionText, systemImage: "clock.arrow.circlepath")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private var savedPositionText: String? {
+        guard let savedProgress, !savedProgress.completed, savedProgress.position_ms > 0 else {
+            return nil
+        }
+
+        if let durationMs = savedProgress.duration_ms, durationMs > 0 {
+            return "Saved position \(formatMs(savedProgress.position_ms)) / \(formatMs(durationMs))"
+        }
+
+        return "Saved position \(formatMs(savedProgress.position_ms))"
     }
 
     @ViewBuilder
@@ -568,8 +587,20 @@ private struct EpisodeDetailView: View {
         }
 
         state = .loading
+        savedProgress = nil
         do {
-            state = .loaded(try await client.getEpisodeDetail(episodeId: route.episode.id))
+            async let detailRequest = client.getEpisodeDetail(episodeId: route.episode.id)
+            async let progressRequest = client.getProgress(episodeId: route.episode.id)
+
+            state = .loaded(try await detailRequest)
+
+            do {
+                savedProgress = try await progressRequest
+            } catch APIError.unauthorized {
+                auth.logout()
+            } catch {
+                savedProgress = nil
+            }
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
