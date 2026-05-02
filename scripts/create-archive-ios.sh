@@ -7,8 +7,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<USAGE
 Usage:
-  scripts/archive-ios.sh [TEAM_ID] [options]
-  scripts/archive-ios.sh --team-id <TEAM_ID> [options]
+  scripts/create-archive-ios.sh [TEAM_ID] [options]
+  scripts/create-archive-ios.sh --team-id <TEAM_ID> [options]
 
 Options:
   -t, --team-id TEAM_ID       Developer Team ID.

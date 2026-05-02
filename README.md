@@ -104,7 +104,7 @@ All routes use `Authorization: Bearer <site-token>`. Session-protected routes ad
 Create an iOS device archive, then export a development `.ipa`:
 
 ```sh
-scripts/archive-ios.sh
+scripts/create-archive-ios.sh
 scripts/export-archive.sh
 ```
 
@@ -113,7 +113,7 @@ The archive script writes an iOS-only archive to `./build/s3player-app.xcarchive
 Use flags when you need an explicit team ID, explicit paths, or another export method:
 
 ```sh
-scripts/archive-ios.sh <TEAM_ID> \
+scripts/create-archive-ios.sh <TEAM_ID> \
   --archive-path /path/to/s3player-app.xcarchive
 
 scripts/export-archive.sh <TEAM_ID> \

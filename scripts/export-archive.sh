@@ -140,7 +140,7 @@ validate_ios_archive() {
   [[ -n "$device_family" ]] || die "archive is not an iOS app archive; UIDeviceFamily is missing"
 }
 
-[[ -d "$ARCHIVE_PATH" ]] || die "archive does not exist: $ARCHIVE_PATH; run scripts/archive-ios.sh first"
+[[ -d "$ARCHIVE_PATH" ]] || die "archive does not exist: $ARCHIVE_PATH; run scripts/create-archive-ios.sh first"
 validate_ios_archive "$ARCHIVE_PATH"
 
 /bin/mkdir -p "$EXPORT_PATH"
