@@ -168,27 +168,21 @@ final class PlaybackController: ObservableObject {
             resumePositionMs = 0
         }
 
-        do {
-            let response = try await client.getAudioURL(episodeId: episode.id)
-            guard let url = URL(string: response.url) else {
-                loadError = "Server returned an invalid audio URL."
-                return
-            }
-            let resumeSeconds = Double(resumePositionMs) / 1000
-            player.prepare(
-                url: url,
-                resumeAtSeconds: resumeSeconds,
-                title: nowPlayingTitle(for: episode),
-                artist: show.name
-            )
-            lastSavedPositionMs = resumePositionMs
-            if sessionState == .active, !player.isPlaying {
-                player.togglePlayback()
-            }
-        } catch APIError.unauthorized {
-            auth.logout()
-        } catch {
-            loadError = errorMessage(error)
+        guard let url = client.audioStreamURL(episodeId: episode.id) else {
+            loadError = "Could not build audio URL."
+            return
+        }
+        let resumeSeconds = Double(resumePositionMs) / 1000
+        player.prepare(
+            url: url,
+            httpHeaders: client.authorizationHeaders,
+            resumeAtSeconds: resumeSeconds,
+            title: nowPlayingTitle(for: episode),
+            artist: show.name
+        )
+        lastSavedPositionMs = resumePositionMs
+        if sessionState == .active, !player.isPlaying {
+            player.togglePlayback()
         }
     }
 
@@ -210,6 +204,10 @@ final class PlaybackController: ObservableObject {
             let claim = try await client.claimSession()
             auth.setPlayerSessionToken(claim.session_token)
             sessionState = .active
+            // Sync to the latest server-side position so a take-over (or a delayed
+            // Start Playback) resumes from wherever the prior holder left off,
+            // not the snapshot we fetched at beginPlay time.
+            await syncResumePositionFromServer(client: client)
             // A successful claim should leave the prepared player running, even if
             // overlapping claim completions arrive after playback has already started.
             if !player.isPlaying {
@@ -220,6 +218,21 @@ final class PlaybackController: ObservableObject {
         } catch {
             sessionState = fallbackState
             loadError = errorMessage(error)
+        }
+    }
+
+    private func syncResumePositionFromServer(client: APIClient) async {
+        guard let episode = currentEpisode else { return }
+        do {
+            let progress = try await client.getProgress(episodeId: episode.id)
+            let positionMs = progress.completed ? 0 : progress.position_ms
+            player.setResumePosition(toSeconds: Double(positionMs) / 1000)
+            resumePositionMs = positionMs
+            lastSavedPositionMs = positionMs
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            // Transient: keep the existing prepared resume position.
         }
     }
 

@@ -23,6 +23,9 @@ struct s3player_appApp: App {
                 LoginView(auth: auth)
             }
         }
+        #if os(macOS)
+        .defaultSize(width: 900, height: 900)
+        #endif
     }
 }
 

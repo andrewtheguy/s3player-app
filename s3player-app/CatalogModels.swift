@@ -82,11 +82,6 @@ struct EpisodesResponse: Decodable {
     let episodes: [Episode]
 }
 
-struct AudioUrlResponse: Decodable {
-    let url: String
-    let expires_in: Int
-}
-
 struct ClaimResponse: Decodable {
     let session_token: String
 }

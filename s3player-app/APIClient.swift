@@ -39,9 +39,10 @@ struct APIClient {
     var session: URLSession = .shared
     var decoder: JSONDecoder = CatalogDecoder.make()
 
-    // Authorization: Bearer <site-token> is attached to every /api/* request.
+    // Authorization: Bearer <site-token> is attached to every /api/* request,
+    // including the audio stream URL consumed by AVPlayer.
     // X-Player-Session is attached only to player-session-protected endpoints
-    // (validateSession, saveProgress) — never to browse, audio_url, or login.
+    // (validateSession, saveProgress) — never to browse, audio, or login.
 
     init?(auth: AuthViewModel) {
         guard
@@ -82,8 +83,12 @@ struct APIClient {
         try await get("api/shows/episodes/\(episodeId)")
     }
 
-    func getAudioURL(episodeId: Int) async throws -> AudioUrlResponse {
-        try await get("api/shows/episodes/\(episodeId)/audio_url")
+    func audioStreamURL(episodeId: Int) -> URL? {
+        host.appendingPathComponent("api/shows/episodes/\(episodeId)/audio")
+    }
+
+    var authorizationHeaders: [String: String] {
+        ["Authorization": "Bearer \(token)"]
     }
 
     func getProgress(episodeId: Int) async throws -> ProgressResponse {

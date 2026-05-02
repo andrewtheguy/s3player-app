@@ -52,11 +52,24 @@ final class AudioPlayerViewModel: ObservableObject {
         return min(max(elapsedTime / duration, 0), 1)
     }
 
-    func prepare(url: URL, resumeAtSeconds: Double = 0, title: String, artist: String) {
+    func prepare(
+        url: URL,
+        httpHeaders: [String: String] = [:],
+        resumeAtSeconds: Double = 0,
+        title: String,
+        artist: String
+    ) {
         stop()
         guard configureAudioSession() else { return }
 
-        let item = AVPlayerItem(url: url)
+        // AVURLAssetHTTPHeaderFieldsKey lets AVPlayer attach our bearer token to the
+        // backend audio-stream request (and to every range request it issues).
+        var assetOptions: [String: Any] = [:]
+        if !httpHeaders.isEmpty {
+            assetOptions["AVURLAssetHTTPHeaderFieldsKey"] = httpHeaders
+        }
+        let asset = AVURLAsset(url: url, options: assetOptions.isEmpty ? nil : assetOptions)
+        let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         self.player = player
         pendingSeekSeconds = max(0, resumeAtSeconds)
@@ -136,6 +149,27 @@ final class AudioPlayerViewModel: ObservableObject {
                 self?.elapsedTime = targetTime.seconds
                 self?.updateNowPlayingInfo()
             }
+        }
+    }
+
+    // Update the resume target whether the asset is already ready (seek directly)
+    // or still loading (defer via pendingSeekSeconds, applied on .readyToPlay).
+    func setResumePosition(toSeconds seconds: Double) {
+        let target = max(0, seconds)
+        if let player, hasDuration {
+            let clamped = min(target, max(0, duration - 0.5))
+            let time = CMTime(seconds: clamped, preferredTimescale: 600)
+            pendingSeekSeconds = 0
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.elapsedTime = time.seconds
+                    self?.updateNowPlayingInfo()
+                }
+            }
+        } else {
+            pendingSeekSeconds = target
+            elapsedTime = target
+            updateNowPlayingInfo()
         }
     }
 

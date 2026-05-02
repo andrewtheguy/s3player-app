@@ -66,6 +66,9 @@ struct StationsView: View {
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
         }
+        .navigationDestination(for: MonthRouteKey.self) { key in
+            EpisodesView(show: key.show, year: key.year, month: key.month, auth: auth)
+        }
         .navigationDestination(for: EpisodeRouteKey.self) { key in
             EpisodeDetailView(route: key, auth: auth)
         }
@@ -307,9 +310,6 @@ struct MonthsView: View {
             .navigationTitle(show.name)
             .task { await load() }
             .refreshable { await load() }
-            .navigationDestination(for: MonthRouteKey.self) { key in
-                EpisodesView(show: key.show, year: key.year, month: key.month, auth: auth)
-            }
     }
 
     @ViewBuilder
@@ -377,9 +377,6 @@ struct EpisodesView: View {
             .navigationTitle(monthTitle)
             .task { await load() }
             .refreshable { await load() }
-            .navigationDestination(for: EpisodeRouteKey.self) { key in
-                EpisodeDetailView(route: key, auth: auth)
-            }
     }
 
     @ViewBuilder
@@ -455,6 +452,7 @@ private struct EpisodeDetailView: View {
     @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<EpisodeDetail> = .idle
     @State private var savedProgress: ProgressResponse?
+    private static let progressRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
         List {
@@ -465,7 +463,10 @@ private struct EpisodeDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .task(id: route.episode.id) { await load() }
+        .task(id: route.episode.id) {
+            await load()
+            await refreshProgressPeriodically()
+        }
         .refreshable { await load() }
     }
 
@@ -512,16 +513,29 @@ private struct EpisodeDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-                playButton
+                if isCurrentlyPlaying {
+                    Label("Now Playing", systemImage: "waveform")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                } else {
+                    playButton
 
-                if let savedPositionText {
-                    Label(savedPositionText, systemImage: "clock.arrow.circlepath")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    if let savedPositionText {
+                        Label(savedPositionText, systemImage: "clock.arrow.circlepath")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 8)
         }
+    }
+
+    private var isCurrentlyPlaying: Bool {
+        playback.currentEpisode?.id == displayedEpisode.id && playback.sessionState == .active
     }
 
     private var playButton: some View {
@@ -628,6 +642,27 @@ private struct EpisodeDetailView: View {
             state = .failed(errorMessage(error))
         }
     }
+
+    private func refreshProgressPeriodically() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.progressRefreshInterval)
+            if Task.isCancelled { return }
+            await refreshProgress()
+        }
+    }
+
+    private func refreshProgress() async {
+        guard let client = APIClient(auth: auth) else { return }
+        do {
+            // Background tick: keep prior savedProgress on transient errors so the
+            // UI doesn't flicker between a known state and "not loaded yet".
+            savedProgress = try await client.getProgress(episodeId: route.episode.id)
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            // Transient: keep existing savedProgress.
+        }
+    }
 }
 
 private struct RecentRail: View {
@@ -653,10 +688,25 @@ private struct RecentRail: View {
 private struct RecentCard: View {
     let entry: RecentEpisode
     @EnvironmentObject var playback: PlaybackController
+    @EnvironmentObject var navigation: NavigationCoordinator
 
     var body: some View {
-        let synthesized = entry.synthesizedEpisodeAndShow()
-        NavigationLink(value: EpisodeRouteKey(episode: synthesized.episode, show: synthesized.show)) {
+        Button {
+            let synthesized = entry.synthesizedEpisodeAndShow()
+            // Push month then episode so the back button leads to the show's
+            // month view (matching the drill-through path Stations → Shows →
+            // Months → Episodes → EpisodeDetail).
+            let calendar = Calendar(identifier: .gregorian)
+            let components = calendar.dateComponents([.year, .month], from: entry.aired_on)
+            if let year = components.year, let month = components.month {
+                navigation.path.append(
+                    MonthRouteKey(show: synthesized.show, year: year, month: month)
+                )
+            }
+            navigation.path.append(
+                EpisodeRouteKey(episode: synthesized.episode, show: synthesized.show)
+            )
+        } label: {
             content
         }
         .buttonStyle(.plain)

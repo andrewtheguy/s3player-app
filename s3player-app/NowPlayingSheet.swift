@@ -10,6 +10,7 @@ import SwiftUI
 struct NowPlayingSheet: View {
     @ObservedObject var controller: PlaybackController
     @ObservedObject var player: AudioPlayerViewModel
+    @EnvironmentObject var navigation: NavigationCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var scrubberProgress: Double = 0
     @State private var isScrubbing = false
@@ -26,13 +27,14 @@ struct NowPlayingSheet: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if let show = controller.currentShow, let episode = controller.currentEpisode {
                         metadata(show: show, episode: episode)
+                        episodeDetailsLink(show: show, episode: episode)
                     }
                     playbackControls
                     if controller.sessionState == .active {
                         progressView
-                    }
-                    if !chapters.isEmpty {
-                        chaptersSection
+                        if !chapters.isEmpty {
+                            chaptersSection
+                        }
                     }
                     statusView
                 }
@@ -44,11 +46,11 @@ struct NowPlayingSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "chevron.down")
+                        Text("Done")
                             .font(.body.weight(.semibold))
                     }
                     .accessibilityLabel("Collapse player")
@@ -64,6 +66,12 @@ struct NowPlayingSheet: View {
             }
             .task(id: controller.currentEpisode?.id) {
                 await loadChapters(for: controller.currentEpisode?.id)
+            }
+            .onChange(of: controller.sessionState) { _, newState in
+                // Refetch chapters when the session is (re)claimed so any
+                // server-side edits land at the same moment we sync position.
+                guard newState == .active else { return }
+                Task { await loadChapters(for: controller.currentEpisode?.id) }
             }
         }
     }
@@ -151,6 +159,37 @@ struct NowPlayingSheet: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
+    }
+
+    private func episodeDetailsLink(show: ShowDetail, episode: Episode) -> some View {
+        Button {
+            openEpisodeDetail(show: show, episode: episode)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "list.bullet.rectangle")
+                Text("Show Episode Details")
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+            }
+            .font(.subheadline.weight(.medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .accessibilityHint("Opens episode details and chapters")
+    }
+
+    private func openEpisodeDetail(show: ShowDetail, episode: Episode) {
+        // Replace the stack so back from EpisodeDetail lands on the show's
+        // month view (matching the drill-through and rail flows).
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.year, .month], from: episode.aired_on)
+        var path = NavigationPath()
+        if let year = components.year, let month = components.month {
+            path.append(MonthRouteKey(show: show, year: year, month: month))
+        }
+        path.append(EpisodeRouteKey(episode: episode, show: show))
+        navigation.path = path
+        dismiss()
     }
 
     @ViewBuilder
