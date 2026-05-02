@@ -89,6 +89,7 @@ struct ClaimResponse: Decodable {
 struct ProgressRequest: Encodable {
     let position_ms: Int
     let duration_ms: Int?
+    let completed: Bool
 }
 
 struct ProgressResponse: Decodable {

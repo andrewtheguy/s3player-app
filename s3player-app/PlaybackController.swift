@@ -24,6 +24,7 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var currentShow: ShowDetail?
     @Published private(set) var sessionState: SessionState = .inactive
     @Published private(set) var loadError: String?
+    @Published private(set) var replayConfirmNeeded: Bool = false
     @Published var isExpanded: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
@@ -76,13 +77,27 @@ final class PlaybackController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Natural end of playback: complete + final progress save.
+        // Natural end of playback: a single progress save with completed=true,
+        // then surface the replay-confirm gate so the next periodic tick (which
+        // would write completed=false under the new EXCLUDED.completed upsert
+        // semantics) doesn't silently un-complete the episode.
         player.$hasFinishedPlayback
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] finished in
                 guard let self, finished else { return }
-                Task { await self.markEpisodeCompleted() }
+                Task { await self.saveCompletion() }
+            }
+            .store(in: &cancellables)
+
+        // Surface "duration unknown / Infinity / 0" assets as a load error so
+        // the now-playing sheet can render the unplayable banner.
+        player.$playbackUnsupported
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] unsupported in
+                guard let self, unsupported else { return }
+                self.loadError = "This episode reports no duration and can't be played."
             }
             .store(in: &cancellables)
     }
@@ -94,27 +109,42 @@ final class PlaybackController: ObservableObject {
     }
 
     func togglePlayback() {
-        guard sessionState == .active else { return }
+        guard canControlPlayback else { return }
         player.togglePlayback()
     }
 
     func skip(by seconds: Double) {
-        guard sessionState == .active else { return }
+        guard canControlPlayback else { return }
         player.skip(by: seconds)
     }
 
     func seek(toProgress progress: Double) {
-        guard sessionState == .active else { return }
+        guard canControlPlayback else { return }
         player.seek(to: progress)
         Task { await saveProgressIfActive() }
     }
 
     func seek(toMilliseconds ms: Int) {
-        guard sessionState == .active else { return }
+        guard canControlPlayback else { return }
         guard player.hasDuration, player.duration > 0 else { return }
         let progress = Double(ms) / 1000.0 / player.duration
         player.seek(to: min(max(progress, 0), 1))
         Task { await saveProgressIfActive() }
+    }
+
+    private var canControlPlayback: Bool {
+        sessionState == .active && !replayConfirmNeeded && !player.playbackUnsupported
+    }
+
+    func confirmReplay() {
+        guard replayConfirmNeeded else { return }
+        replayConfirmNeeded = false
+        resumePositionMs = 0
+        lastSavedPositionMs = -1
+        player.setResumePosition(toSeconds: 0)
+        if sessionState == .active, !player.isPlaying {
+            player.togglePlayback()
+        }
     }
 
     func expand() {
@@ -136,12 +166,13 @@ final class PlaybackController: ObservableObject {
             // Snapshot prior position before player.stop() resets it inside prepare.
             let positionMs = max(0, Int(player.elapsedTime * 1000))
             let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
-            await saveProgress(positionMs: positionMs, durationMs: durationMs)
+            await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: false)
         }
 
         currentEpisode = episode
         currentShow = show
         loadError = nil
+        replayConfirmNeeded = false
         resumePositionMs = 0
         lastSavedPositionMs = -1
         if sessionState != .displaced {
@@ -160,11 +191,17 @@ final class PlaybackController: ObservableObject {
 
         do {
             let progress = try await client.getProgress(episodeId: episode.id)
-            resumePositionMs = progress.completed ? 0 : progress.position_ms
+            // Seed the player at the saved position even when completed so the
+            // user sees the end timestamp (not 0) until they confirm replay.
+            // The replay-confirm gate prevents the next periodic save from
+            // silently overwriting completed=true with completed=false.
+            replayConfirmNeeded = progress.completed
+            resumePositionMs = progress.position_ms
         } catch APIError.unauthorized {
             auth.logout()
             return
         } catch {
+            replayConfirmNeeded = false
             resumePositionMs = 0
         }
 
@@ -181,7 +218,7 @@ final class PlaybackController: ObservableObject {
             artist: show.name
         )
         lastSavedPositionMs = resumePositionMs
-        if sessionState == .active, !player.isPlaying {
+        if sessionState == .active, !player.isPlaying, !replayConfirmNeeded {
             player.togglePlayback()
         }
     }
@@ -210,7 +247,9 @@ final class PlaybackController: ObservableObject {
             await syncResumePositionFromServer(client: client)
             // A successful claim should leave the prepared player running, even if
             // overlapping claim completions arrive after playback has already started.
-            if !player.isPlaying {
+            // Skip auto-play when a replay gate or unplayable asset is in the way —
+            // either is an explicit "needs user action" state.
+            if !player.isPlaying, !replayConfirmNeeded, !player.playbackUnsupported {
                 player.togglePlayback()
             }
         } catch APIError.unauthorized {
@@ -225,7 +264,8 @@ final class PlaybackController: ObservableObject {
         guard let episode = currentEpisode else { return }
         do {
             let progress = try await client.getProgress(episodeId: episode.id)
-            let positionMs = progress.completed ? 0 : progress.position_ms
+            replayConfirmNeeded = progress.completed
+            let positionMs = progress.position_ms
             player.setResumePosition(toSeconds: Double(positionMs) / 1000)
             resumePositionMs = positionMs
             lastSavedPositionMs = positionMs
@@ -263,49 +303,67 @@ final class PlaybackController: ObservableObject {
     }
 
     private func saveProgressIfActive() async {
-        guard sessionState == .active else { return }
+        guard sessionState == .active,
+              !replayConfirmNeeded,
+              !player.playbackUnsupported else { return }
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
-        await saveProgress(positionMs: positionMs, durationMs: durationMs)
+        await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: false)
     }
 
-    private func saveProgress(positionMs: Int, durationMs: Int?) async {
+    @discardableResult
+    private func saveProgress(positionMs: Int, durationMs: Int?, completed: Bool) async -> Bool {
         guard sessionState == .active,
               let episode = currentEpisode,
               let token = auth.playerSessionToken,
-              let client = APIClient(auth: auth) else { return }
-        if positionMs == lastSavedPositionMs { return }
+              let client = APIClient(auth: auth),
+              !player.playbackUnsupported else { return false }
+        // Always allow the completion write through, even if the position has
+        // not advanced since the last save (the natural-end tick can land on
+        // the same ms as the prior periodic tick).
+        if positionMs == lastSavedPositionMs && !completed { return true }
         do {
             try await client.saveProgress(
                 episodeId: episode.id,
                 playerToken: token,
                 positionMs: positionMs,
-                durationMs: durationMs
+                durationMs: durationMs,
+                completed: completed
             )
             lastSavedPositionMs = positionMs
+            return true
         } catch APIError.sessionDisplaced {
             handleDisplacement()
+            return false
         } catch APIError.unauthorized {
             auth.logout()
+            return false
         } catch {
             // Transient: keep playing; the next tick or pause retries.
+            return false
         }
     }
 
-    private func markEpisodeCompleted() async {
+    private func saveCompletion() async {
         guard sessionState == .active,
-              let episode = currentEpisode,
-              let token = auth.playerSessionToken,
-              let client = APIClient(auth: auth) else { return }
-        await saveProgressIfActive()
-        do {
-            try await client.markComplete(episodeId: episode.id, playerToken: token)
-        } catch APIError.sessionDisplaced {
-            handleDisplacement()
-        } catch APIError.unauthorized {
-            auth.logout()
-        } catch {
-            loadError = errorMessage(error)
+              currentEpisode != nil,
+              auth.playerSessionToken != nil,
+              !player.playbackUnsupported else { return }
+        let positionMs = max(0, Int(player.elapsedTime * 1000))
+        let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+        // Only flip the replay-confirm gate if the completion write actually
+        // landed. Otherwise a transient failure would gate the UI without the
+        // server knowing the episode is complete, and the gate suppresses
+        // saveProgressIfActive — so the completion would be silently lost.
+        let succeeded = await saveProgress(
+            positionMs: positionMs,
+            durationMs: durationMs,
+            completed: true
+        )
+        if succeeded {
+            replayConfirmNeeded = true
+        } else if sessionState == .active {
+            loadError = "Couldn't mark this episode complete. Tap play to retry."
         }
     }
 
@@ -318,6 +376,7 @@ final class PlaybackController: ObservableObject {
         currentShow = nil
         sessionState = .inactive
         loadError = nil
+        replayConfirmNeeded = false
         isExpanded = false
         resumePositionMs = 0
         lastSavedPositionMs = -1

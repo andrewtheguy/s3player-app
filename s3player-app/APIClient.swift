@@ -123,19 +123,16 @@ struct APIClient {
         episodeId: Int,
         playerToken: String,
         positionMs: Int,
-        durationMs: Int?
+        durationMs: Int?,
+        completed: Bool
     ) async throws {
         let _: EmptyResponse = try await post(
             "api/player/episodes/\(episodeId)/progress",
-            body: ProgressRequest(position_ms: positionMs, duration_ms: durationMs),
-            playerSessionToken: playerToken
-        )
-    }
-
-    func markComplete(episodeId: Int, playerToken: String) async throws {
-        let _: EmptyResponse = try await post(
-            "api/player/episodes/\(episodeId)/complete",
-            body: Optional<Empty>.none,
+            body: ProgressRequest(
+                position_ms: positionMs,
+                duration_ms: durationMs,
+                completed: completed
+            ),
             playerSessionToken: playerToken
         )
     }
