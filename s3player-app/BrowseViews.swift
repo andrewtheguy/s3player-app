@@ -303,7 +303,7 @@ struct MonthsView: View {
             EmptyStateView(message: "No episodes for this show yet.")
         case .loaded(let grouped):
             List {
-                ForEach(grouped.keys.sorted(by: >), id: \.self) { year in
+                ForEach(grouped.keys.sorted(by: <), id: \.self) { year in
                     Section(String(year)) {
                         let months = (grouped[year] ?? []).sorted { $0.month < $1.month }
                         ForEach(months, id: \.self) { bucket in
