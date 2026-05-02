@@ -29,28 +29,50 @@ struct MiniNowPlayingBar: View {
         VStack(spacing: 0) {
             progressBar
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(show.name)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Text(subtitle(for: episode))
-                        .font(.caption.monospacedDigit())
+                Button {
+                    controller.expand()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text("Now Playing")
+                                .font(.caption.weight(.semibold))
+                            Image(systemName: "chevron.up")
+                                .font(.caption2.weight(.bold))
+                        }
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+
+                        Text(show.name)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(subtitle(for: episode))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { controller.expand() }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open now playing")
+                .accessibilityHint("Expands the full player")
 
                 actionButton
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .background(.regularMaterial)
-        .overlay(alignment: .top) {
-            Divider()
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.regularMaterial)
         }
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 12, y: 4)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
     private var progressBar: some View {
