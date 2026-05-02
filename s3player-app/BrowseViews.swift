@@ -66,6 +66,9 @@ struct StationsView: View {
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
         }
+        .navigationDestination(for: EpisodeRouteKey.self) { key in
+            EpisodeDetailView(route: key, auth: auth)
+        }
     }
 
     @ViewBuilder
@@ -652,10 +655,8 @@ private struct RecentCard: View {
     @EnvironmentObject var playback: PlaybackController
 
     var body: some View {
-        Button {
-            let synthesized = entry.synthesizedEpisodeAndShow()
-            playback.play(episode: synthesized.episode, show: synthesized.show)
-        } label: {
+        let synthesized = entry.synthesizedEpisodeAndShow()
+        NavigationLink(value: EpisodeRouteKey(episode: synthesized.episode, show: synthesized.show)) {
             content
         }
         .buttonStyle(.plain)
