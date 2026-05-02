@@ -13,6 +13,9 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             StationsView(auth: auth)
+                .navigationDestination(for: EpisodeRouteKey.self) { key in
+                    PlayerView(episode: key.episode, show: key.show, auth: auth)
+                }
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button("Sign Out") {

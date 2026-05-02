@@ -86,6 +86,14 @@ struct APIClient {
         try await get("api/player/episodes/\(episodeId)/progress")
     }
 
+    func listRecent(limit: Int = 10) async throws -> RecentResponse {
+        try await get("api/player/recent", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    func listInProgress(limit: Int = 10) async throws -> RecentResponse {
+        try await get("api/player/in-progress", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
     func claimSession() async throws -> ClaimResponse {
         try await post("api/player/session/claim", body: Optional<Empty>.none, playerSessionToken: nil)
     }
@@ -124,8 +132,17 @@ struct APIClient {
         init(from decoder: Decoder) throws {}
     }
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        let request = try makeRequest(path: path, method: "GET", body: Optional<Empty>.none, playerSessionToken: nil)
+    private func get<T: Decodable>(
+        _ path: String,
+        queryItems: [URLQueryItem] = []
+    ) async throws -> T {
+        let request = try makeRequest(
+            path: path,
+            method: "GET",
+            body: Optional<Empty>.none,
+            playerSessionToken: nil,
+            queryItems: queryItems
+        )
         return try await execute(request)
     }
 
@@ -134,7 +151,12 @@ struct APIClient {
         body: Body?,
         playerSessionToken: String?
     ) async throws -> T {
-        let request = try makeRequest(path: path, method: "POST", body: body, playerSessionToken: playerSessionToken)
+        let request = try makeRequest(
+            path: path,
+            method: "POST",
+            body: body,
+            playerSessionToken: playerSessionToken
+        )
         return try await execute(request)
     }
 
@@ -142,9 +164,17 @@ struct APIClient {
         path: String,
         method: String,
         body: Body?,
-        playerSessionToken: String?
+        playerSessionToken: String?,
+        queryItems: [URLQueryItem] = []
     ) throws -> URLRequest {
-        let url = host.appendingPathComponent(path)
+        var components = URLComponents(
+            url: host.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components?.url else {
+            throw APIError.invalidHost
+        }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
