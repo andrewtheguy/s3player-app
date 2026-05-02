@@ -27,7 +27,7 @@ struct ContentView: View {
                 .padding(24)
             }
             .navigationTitle("S3 Player")
-            .background(Color(.systemGroupedBackground))
+            .background(groupedBackground)
             .onChange(of: player.progress) { _, newProgress in
                 guard !isScrubbing else { return }
                 scrubberProgress = newProgress
@@ -55,14 +55,16 @@ struct ContentView: View {
                 .font(.headline)
 
             TextField("Paste audio URL", text: $player.audioURLText)
+                #if os(iOS)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
+                .submitLabel(.go)
+                #endif
                 .autocorrectionDisabled()
                 .focused($isURLFieldFocused)
-                .submitLabel(.go)
                 .onSubmit(playURL)
                 .padding(14)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+                .background(secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 8))
 
             Button(action: playURL) {
                 Label(player.isLoading ? "Loading" : "Load and Play", systemImage: "play.fill")
@@ -137,6 +139,22 @@ struct ContentView: View {
     private func playURL() {
         isURLFieldFocused = false
         player.loadAndPlay()
+    }
+
+    private var groupedBackground: Color {
+        #if os(macOS)
+        Color(NSColor.windowBackgroundColor)
+        #else
+        Color(.systemGroupedBackground)
+        #endif
+    }
+
+    private var secondaryGroupedBackground: Color {
+        #if os(macOS)
+        Color(NSColor.controlBackgroundColor)
+        #else
+        Color(.secondarySystemGroupedBackground)
+        #endif
     }
 }
 

@@ -144,6 +144,7 @@ final class AudioPlayerViewModel: ObservableObject {
     }
 
     private func configureAudioSession() -> Bool {
+        #if os(iOS)
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
@@ -152,6 +153,9 @@ final class AudioPlayerViewModel: ObservableObject {
             statusMessage = "Audio session setup failed: \(error.localizedDescription)"
             return false
         }
+        #else
+        return true
+        #endif
     }
 
     private func observe(item: AVPlayerItem) {
