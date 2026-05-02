@@ -20,6 +20,7 @@ struct StationsView: View {
     @State private var inProgressState: LoadState<[RecentEpisode]> = .idle
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
     @State private var didInitialLoad = false
+    private static let railRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
         List {
@@ -52,6 +53,9 @@ struct StationsView: View {
             guard !didInitialLoad else { return }
             didInitialLoad = true
             await loadAll()
+        }
+        .task {
+            await refreshRailsPeriodically()
         }
         .onAppear {
             if didInitialLoad {
@@ -206,6 +210,14 @@ struct StationsView: View {
             }
         }
     }
+
+    private func refreshRailsPeriodically() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.railRefreshInterval)
+            if Task.isCancelled { return }
+            await loadRails()
+        }
+    }
 }
 
 struct ShowsView: View {
@@ -345,16 +357,12 @@ struct MonthsView: View {
     }
 }
 
-struct EpisodeRouteKey: Hashable {
-    let show: ShowDetail
-    let episode: Episode
-}
-
 struct EpisodesView: View {
     let show: ShowDetail
     let year: Int
     let month: Int
     @ObservedObject var auth: AuthViewModel
+    @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<[Episode]> = .idle
 
     var body: some View {
@@ -375,9 +383,12 @@ struct EpisodesView: View {
             EmptyStateView(message: "No episodes in this month.")
         case .loaded(let episodes):
             List(episodes) { episode in
-                NavigationLink(value: EpisodeRouteKey(show: show, episode: episode)) {
+                Button {
+                    playback.play(episode: episode, show: show)
+                } label: {
                     EpisodeRow(episode: episode)
                 }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -427,18 +438,9 @@ private struct EpisodeRow: View {
     }
 
     private func formattedDate(_ date: Date) -> String {
-        airedOnFormatter.string(from: date)
+        DateFormatter.sharedISODate.string(from: date)
     }
 }
-
-private let airedOnFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.calendar = Calendar(identifier: .iso8601)
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-}()
 
 private struct RecentRail: View {
     let entries: [RecentEpisode]
@@ -462,9 +464,13 @@ private struct RecentRail: View {
 
 private struct RecentCard: View {
     let entry: RecentEpisode
+    @EnvironmentObject var playback: PlaybackController
 
     var body: some View {
-        NavigationLink(value: entry.routeKey) {
+        Button {
+            let synthesized = entry.synthesizedEpisodeAndShow()
+            playback.play(episode: synthesized.episode, show: synthesized.show)
+        } label: {
             content
         }
         .buttonStyle(.plain)
@@ -478,7 +484,7 @@ private struct RecentCard: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
             HStack(spacing: 6) {
-                Text(airedOnFormatter.string(from: entry.aired_on))
+                Text(DateFormatter.sharedISODate.string(from: entry.aired_on))
                 let slot = formatTimeSlot(entry.time_slot)
                 if !slot.isEmpty {
                     Text("·")
@@ -520,7 +526,9 @@ private struct RecentCard: View {
 }
 
 extension RecentEpisode {
-    var routeKey: EpisodeRouteKey {
+    func synthesizedEpisodeAndShow() -> (episode: Episode, show: ShowDetail) {
+        // PlaybackController only reads episode.id / aired_on / time_slot and show.name,
+        // so the unset fields below are safe placeholders for the rail-driven entry path.
         let show = ShowDetail(
             id: show_id,
             station: station,
@@ -534,11 +542,11 @@ extension RecentEpisode {
             s3_key: "",
             chapters: nil
         )
-        return EpisodeRouteKey(show: show, episode: episode)
+        return (episode, show)
     }
 }
 
-private func formatMs(_ ms: Int) -> String {
+func formatMs(_ ms: Int) -> String {
     let totalSeconds = max(0, ms) / 1000
     let hours = totalSeconds / 3_600
     let minutes = (totalSeconds % 3_600) / 60
@@ -600,11 +608,4 @@ private struct ErrorStateView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
-}
-
-private func errorMessage(_ error: Error) -> String {
-    if let apiError = error as? APIError {
-        return apiError.errorDescription ?? "Request failed."
-    }
-    return error.localizedDescription
 }
