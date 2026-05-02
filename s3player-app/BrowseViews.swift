@@ -531,7 +531,7 @@ private struct EpisodeDetailView: View {
     }
 
     private var isCurrentlyPlaying: Bool {
-        playback.currentEpisode?.id == displayedEpisode.id
+        playback.currentEpisode?.id == displayedEpisode.id && playback.sessionState == .active
     }
 
     private var playButton: some View {
