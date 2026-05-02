@@ -84,6 +84,23 @@ struct ProgressResponse: Decodable {
     let last_played_at: String?
 }
 
+struct RecentEpisode: Decodable, Hashable, Identifiable {
+    let id: Int
+    let aired_on: Date
+    let time_slot: String?
+    let show_id: Int
+    let show_name: String
+    let station: String
+    let position_ms: Int
+    let duration_ms: Int?
+    let last_played_at: String
+    let completed: Bool
+}
+
+struct RecentResponse: Decodable {
+    let episodes: [RecentEpisode]
+}
+
 enum CatalogDecoder {
     static func make() -> JSONDecoder {
         let decoder = JSONDecoder()

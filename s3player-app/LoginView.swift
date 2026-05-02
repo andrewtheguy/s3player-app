@@ -53,7 +53,7 @@ struct LoginView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Host")
                     .font(.headline)
-                TextField("https://example.com", text: $auth.hostText)
+                TextField("Server host", text: $auth.hostText)
                     #if os(iOS)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
