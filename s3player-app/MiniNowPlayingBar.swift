@@ -17,15 +17,15 @@ struct MiniNowPlayingBar: View {
     }
 
     var body: some View {
-        if let episode = controller.currentEpisode, let show = controller.currentShow {
-            content(episode: episode, show: show)
+        if controller.currentEpisode != nil, let show = controller.currentShow {
+            content(show: show)
         } else {
             EmptyView()
         }
     }
 
     @ViewBuilder
-    private func content(episode: Episode, show: ShowDetail) -> some View {
+    private func content(show: ShowDetail) -> some View {
         VStack(spacing: 0) {
             progressBar
             HStack(spacing: 12) {
@@ -44,7 +44,7 @@ struct MiniNowPlayingBar: View {
                         Text(show.name)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
-                        Text(subtitle(for: episode))
+                        Text(progressText)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -92,10 +92,9 @@ struct MiniNowPlayingBar: View {
         return min(max(player.progress, 0), 1)
     }
 
-    private func subtitle(for episode: Episode) -> String {
-        let date = DateFormatter.sharedISODate.string(from: episode.aired_on)
-        let slot = formatTimeSlot(episode.time_slot)
-        return slot.isEmpty ? date : "\(date) · \(slot)"
+    private var progressText: String {
+        guard player.hasDuration else { return "--:-- / --:--" }
+        return "\(player.formattedTime(player.elapsedTime)) / \(player.formattedTime(player.duration))"
     }
 
     @ViewBuilder

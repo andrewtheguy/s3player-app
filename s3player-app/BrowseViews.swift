@@ -20,6 +20,7 @@ struct StationsView: View {
     @State private var inProgressState: LoadState<[RecentEpisode]> = .idle
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
     @State private var didInitialLoad = false
+    private static let railRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
         List {
@@ -52,6 +53,9 @@ struct StationsView: View {
             guard !didInitialLoad else { return }
             didInitialLoad = true
             await loadAll()
+        }
+        .task {
+            await refreshRailsPeriodically()
         }
         .onAppear {
             if didInitialLoad {
@@ -204,6 +208,14 @@ struct StationsView: View {
             if showLoading {
                 recentState = .failed(errorMessage(error))
             }
+        }
+    }
+
+    private func refreshRailsPeriodically() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.railRefreshInterval)
+            if Task.isCancelled { return }
+            await loadRails()
         }
     }
 }
