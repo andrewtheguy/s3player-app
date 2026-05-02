@@ -71,7 +71,7 @@ struct MiniNowPlayingBar: View {
     }
 
     private func subtitle(for episode: Episode) -> String {
-        let date = airedOnFormatter.string(from: episode.aired_on)
+        let date = DateFormatter.sharedISODate.string(from: episode.aired_on)
         let slot = formatTimeSlot(episode.time_slot)
         return slot.isEmpty ? date : "\(date) · \(slot)"
     }

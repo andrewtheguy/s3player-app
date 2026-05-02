@@ -426,18 +426,9 @@ private struct EpisodeRow: View {
     }
 
     private func formattedDate(_ date: Date) -> String {
-        airedOnFormatter.string(from: date)
+        DateFormatter.sharedISODate.string(from: date)
     }
 }
-
-let airedOnFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.calendar = Calendar(identifier: .iso8601)
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-}()
 
 private struct RecentRail: View {
     let entries: [RecentEpisode]
@@ -481,7 +472,7 @@ private struct RecentCard: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
             HStack(spacing: 6) {
-                Text(airedOnFormatter.string(from: entry.aired_on))
+                Text(DateFormatter.sharedISODate.string(from: entry.aired_on))
                 let slot = formatTimeSlot(entry.time_slot)
                 if !slot.isEmpty {
                     Text("·")

@@ -60,7 +60,7 @@ struct NowPlayingSheet: View {
             Text(show.name)
                 .font(.title2.bold())
             HStack(spacing: 8) {
-                Text(airedOnFormatter.string(from: episode.aired_on))
+                Text(DateFormatter.sharedISODate.string(from: episode.aired_on))
                 let slot = formatTimeSlot(episode.time_slot)
                 if !slot.isEmpty {
                     Text("·")

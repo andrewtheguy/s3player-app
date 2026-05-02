@@ -296,17 +296,8 @@ final class PlaybackController: ObservableObject {
     // MARK: - Helpers
 
     private func nowPlayingTitle(for episode: Episode) -> String {
-        let date = nowPlayingDateFormatter.string(from: episode.aired_on)
+        let date = DateFormatter.sharedISODate.string(from: episode.aired_on)
         let slot = formatTimeSlot(episode.time_slot)
         return slot.isEmpty ? date : "\(date) · \(slot)"
     }
 }
-
-private let nowPlayingDateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.calendar = Calendar(identifier: .iso8601)
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.dateFormat = "yyyy-MM-dd"
-    return formatter
-}()
