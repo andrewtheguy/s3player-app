@@ -199,7 +199,11 @@ final class PlaybackController: ObservableObject {
             let claim = try await client.claimSession()
             auth.setPlayerSessionToken(claim.session_token)
             sessionState = .active
-            player.togglePlayback()
+            // A successful claim should leave the prepared player running, even if
+            // overlapping claim completions arrive after playback has already started.
+            if !player.isPlaying {
+                player.togglePlayback()
+            }
         } catch APIError.unauthorized {
             auth.logout()
         } catch {
