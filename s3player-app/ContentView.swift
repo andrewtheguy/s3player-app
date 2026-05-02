@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var auth: AuthViewModel
     @StateObject private var player = AudioPlayerViewModel()
     @State private var scrubberProgress = 0.0
     @State private var isScrubbing = false
@@ -28,6 +29,14 @@ struct ContentView: View {
             }
             .navigationTitle("S3 Player")
             .background(groupedBackground)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Sign Out") {
+                        player.stop()
+                        auth.logout()
+                    }
+                }
+            }
             .onChange(of: player.progress) { _, newProgress in
                 guard !isScrubbing else { return }
                 scrubberProgress = newProgress
@@ -159,5 +168,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(auth: AuthViewModel())
 }
