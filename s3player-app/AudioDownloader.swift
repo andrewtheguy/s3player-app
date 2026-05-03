@@ -88,15 +88,30 @@ final class AudioDownloader: NSObject {
         } onCancel: { [weak self] in
             // Cooperative-cancellation hop: the Task that called ensureDownloaded
             // was cancelled (e.g. by inflightPlayTask?.cancel()). Tear the
-            // download down on the main actor.
+            // download down on the main actor — but only if THIS task is still
+            // the active one. Otherwise the hop can race a fast episode-switch
+            // and end up cancelling the newer download instead.
             Task { @MainActor [weak self] in
-                self?.cancelActive()
+                self?.cancelIfActive(task)
             }
         }
     }
 
     func cancelActive() {
         guard let task = activeTask else { return }
+        cancelTask(task)
+    }
+
+    /// Identity-scoped cancel: only act if `task` is still the active one.
+    /// Used by the stale-cancellation-handler path so a deferred `onCancel`
+    /// can't cancel a download for a *different* episode that has since
+    /// taken its place.
+    private func cancelIfActive(_ task: URLSessionDownloadTask) {
+        guard activeTask === task else { return }
+        cancelTask(task)
+    }
+
+    private func cancelTask(_ task: URLSessionDownloadTask) {
         task.cancel()
         activeTask = nil
         let continuation = activeContinuation

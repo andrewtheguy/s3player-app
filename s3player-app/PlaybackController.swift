@@ -595,20 +595,28 @@ final class PlaybackController: ObservableObject {
     private func saveCompletion() async {
         guard sessionState == .active,
               currentEpisode != nil,
-              auth.playerSessionToken != nil,
               !player.playbackUnsupported else { return }
+        // No `playerSessionToken != nil` guard here: the offline-bypass branch
+        // in `claimSessionAndPlay` runs the user as `.active` without a token,
+        // and saveProgress already handles that case by writing the snapshot
+        // and enqueueing the entry for flush-on-reconnect. Skipping completion
+        // there would silently drop a natural-end save.
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
-        // Only flip the replay-confirm gate if the completion write actually
-        // landed. Otherwise a transient failure would gate the UI without the
-        // server knowing the episode is complete, and the gate suppresses
-        // saveProgressIfActive — so the completion would be silently lost.
         let succeeded = await saveProgress(
             positionMs: positionMs,
             durationMs: durationMs,
             completed: true
         )
-        if succeeded {
+        // Flip the replay-confirm gate when the completion is durably recorded:
+        // - succeeded: server confirmed.
+        // - isOffline: snapshot was updated to completed=true and the entry is
+        //   queued for the next reconnect, so the user has logically finished
+        //   the episode — the gate should appear and prevent the next periodic
+        //   tick from un-completing it.
+        // Real online failures (sessionDisplaced, non-transport errors) leave
+        // both succeeded=false and isOffline=false — surface the retry banner.
+        if succeeded || isOffline {
             replayConfirmNeeded = true
         } else if sessionState == .active {
             loadError = "Couldn't mark this episode complete. Tap play to retry."
