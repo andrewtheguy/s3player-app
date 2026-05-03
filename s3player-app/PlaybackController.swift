@@ -15,27 +15,63 @@ enum SessionState {
     case displaced
 }
 
+enum PlaybackPhase: Equatable {
+    case idle
+    case preparing
+    case downloading(Double)
+    case ready
+    case offline
+
+    var isBusy: Bool {
+        switch self {
+        case .preparing, .downloading: return true
+        default: return false
+        }
+    }
+}
+
 @MainActor
 final class PlaybackController: ObservableObject {
     let auth: AuthViewModel
     let player = AudioPlayerViewModel()
+    let downloader = AudioDownloader()
 
     @Published private(set) var currentEpisode: Episode?
     @Published private(set) var currentShow: ShowDetail?
     @Published private(set) var sessionState: SessionState = .inactive
     @Published private(set) var loadError: String?
     @Published private(set) var replayConfirmNeeded: Bool = false
+    @Published private(set) var phase: PlaybackPhase = .idle
+    @Published private(set) var isOffline: Bool = false
+    @Published private(set) var cachedChapters: [Chapter] = []
     @Published var isExpanded: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
     private var progressTask: Task<Void, Never>?
+    private var inflightPlayTask: Task<Void, Never>?
     private var lastSavedPositionMs: Int = -1
     private var resumePositionMs: Int = 0
     private static let progressSaveInterval: UInt64 = 5_000_000_000
 
+    private let snapshotStore: PlaybackSnapshotStore?
+    private let pendingProgressStore: PendingProgressStore?
+
     init(auth: AuthViewModel) {
         self.auth = auth
+        self.snapshotStore = try? PlaybackSnapshotStore()
+        self.pendingProgressStore = try? PendingProgressStore()
         sessionState = auth.playerSessionToken != nil ? .active : .inactive
+
+        // Hydrate the Now Playing UI from the on-disk snapshot before any
+        // network call. The mini bar renders immediately even offline; the
+        // user must still tap play to claim a session and start audio.
+        if let snapshot = snapshotStore?.load() {
+            currentEpisode = snapshot.episode
+            currentShow = snapshot.show
+            cachedChapters = snapshot.chapters
+            resumePositionMs = snapshot.progress.position_ms
+            replayConfirmNeeded = snapshot.progress.completed
+        }
 
         // Heartbeat / external clear: any token transition while we're active or
         // mid-activation flips us to .displaced and pauses. Idempotent if already there.
@@ -105,7 +141,40 @@ final class PlaybackController: ObservableObject {
     // MARK: - Public API
 
     func play(episode: Episode, show: ShowDetail) {
-        Task { await self.beginPlay(episode: episode, show: show) }
+        // Cancel any prior in-flight download/prepare so a rapid-tap of a new
+        // episode supersedes the old one cleanly.
+        inflightPlayTask?.cancel()
+        inflightPlayTask = Task { [weak self] in
+            await self?.beginPlay(episode: episode, show: show)
+        }
+    }
+
+    func cancelDownload() {
+        inflightPlayTask?.cancel()
+        inflightPlayTask = nil
+        downloader.cancelActive()
+        if phase.isBusy {
+            phase = .idle
+        }
+    }
+
+    func updateCachedChapters(_ chapters: [Chapter]) {
+        cachedChapters = chapters
+        persistSnapshot()
+    }
+
+    /// Kick off the download-and-prepare flow for the episode hydrated from the
+    /// on-disk snapshot. Used by the mini bar / sheet when the app launches
+    /// with a known last episode but no audio loaded yet.
+    func resumeFromSnapshot() {
+        guard let episode = currentEpisode, let show = currentShow else { return }
+        play(episode: episode, show: show)
+    }
+
+    /// True when the snapshot has hydrated the UI but the player hasn't been
+    /// prepared yet (typical fresh-launch state).
+    var needsResumeFromSnapshot: Bool {
+        currentEpisode != nil && !player.hasLoadedAudio && !phase.isBusy
     }
 
     func togglePlayback() {
@@ -169,16 +238,23 @@ final class PlaybackController: ObservableObject {
             await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: false)
         }
 
+        let priorEpisodeId = currentEpisode?.id
         currentEpisode = episode
         currentShow = show
+        if priorEpisodeId != episode.id {
+            cachedChapters = episode.chapters ?? []
+        }
         loadError = nil
         replayConfirmNeeded = false
         resumePositionMs = 0
         lastSavedPositionMs = -1
+        phase = .preparing
         if sessionState != .displaced {
             sessionState = auth.playerSessionToken != nil ? .active : .inactive
         }
         isExpanded = true
+
+        if Task.isCancelled { return }
 
         await fetchResumeAndPrepare(episode: episode, show: show)
     }
@@ -186,38 +262,110 @@ final class PlaybackController: ObservableObject {
     private func fetchResumeAndPrepare(episode: Episode, show: ShowDetail) async {
         guard let client = APIClient(auth: auth) else {
             loadError = "Not signed in."
+            phase = .idle
             return
         }
 
+        // Step 1: fetch saved progress. On transport failure, fall back to the
+        // snapshot's progress for this episode (so offline resume still works).
+        var progressFetched = false
         do {
             let progress = try await client.getProgress(episodeId: episode.id)
-            // Seed the player at the saved position even when completed so the
-            // user sees the end timestamp (not 0) until they confirm replay.
-            // The replay-confirm gate prevents the next periodic save from
-            // silently overwriting completed=true with completed=false.
             replayConfirmNeeded = progress.completed
             resumePositionMs = progress.position_ms
+            progressFetched = true
+            isOffline = false
         } catch APIError.unauthorized {
             auth.logout()
+            phase = .idle
             return
+        } catch APIError.transport {
+            isOffline = true
+            // Fall through to snapshot fallback below.
         } catch {
             replayConfirmNeeded = false
             resumePositionMs = 0
         }
 
-        guard let url = client.audioStreamURL(episodeId: episode.id) else {
+        if Task.isCancelled { return }
+
+        if !progressFetched, let snapshot = snapshotStore?.load(), snapshot.episode.id == episode.id {
+            replayConfirmNeeded = snapshot.progress.completed
+            resumePositionMs = snapshot.progress.position_ms
+        }
+
+        // Persist the snapshot now that we have the latest known progress, even
+        // if the audio file isn't on disk yet — the mini bar should show the
+        // correct resume time as soon as possible.
+        persistSnapshot(progressOverride: ProgressResponse(
+            position_ms: resumePositionMs,
+            duration_ms: snapshotStore?.load()?.progress.duration_ms,
+            completed: replayConfirmNeeded,
+            last_played_at: nil
+        ))
+
+        // Step 2: ensure the audio is on disk.
+        guard let remoteURL = client.audioStreamURL(episodeId: episode.id) else {
             loadError = "Could not build audio URL."
+            phase = .idle
             return
         }
+
+        let localURL: URL
+        do {
+            phase = .downloading(0)
+            localURL = try await downloader.ensureDownloaded(
+                episodeId: episode.id,
+                remoteURL: remoteURL,
+                bearerToken: client.bearerToken
+            ) { [weak self] fraction in
+                guard let self else { return }
+                self.phase = .downloading(fraction)
+            }
+            isOffline = false
+        } catch AudioDownloader.DownloadError.cancelled {
+            return
+        } catch AudioDownloader.DownloadError.unauthorized {
+            auth.logout()
+            phase = .idle
+            return
+        } catch {
+            // Transport / HTTP / FS failure. If we already have a cached file
+            // for this episode (downloaded on a prior run), use it.
+            if let cached = downloader.cachedFileURL(episodeId: episode.id) {
+                localURL = cached
+                if case AudioDownloader.DownloadError.transport = error {
+                    isOffline = true
+                }
+            } else {
+                if case AudioDownloader.DownloadError.transport = error {
+                    isOffline = true
+                }
+                phase = .offline
+                loadError = "Couldn't download episode and no cached copy is available."
+                return
+            }
+        }
+
+        if Task.isCancelled { return }
+
+        phase = .ready
+
+        // Step 3: hand the file to the player.
         let resumeSeconds = Double(resumePositionMs) / 1000
         player.prepare(
-            url: url,
-            httpHeaders: client.authorizationHeaders,
+            url: localURL,
+            httpHeaders: [:],
             resumeAtSeconds: resumeSeconds,
             title: nowPlayingTitle(for: episode),
             artist: show.name
         )
         lastSavedPositionMs = resumePositionMs
+
+        // Persist the file extension so the snapshot reflects what's on disk.
+        let ext = (localURL.lastPathComponent as NSString).pathExtension
+        persistSnapshot(downloadedFileExtensionOverride: ext)
+
         if sessionState == .active, !player.isPlaying, !replayConfirmNeeded {
             player.togglePlayback()
         }
@@ -241,6 +389,7 @@ final class PlaybackController: ObservableObject {
             let claim = try await client.claimSession()
             auth.setPlayerSessionToken(claim.session_token)
             sessionState = .active
+            isOffline = false
             // Sync to the latest server-side position so a take-over (or a delayed
             // Start Playback) resumes from wherever the prior holder left off,
             // not the snapshot we fetched at beginPlay time.
@@ -254,6 +403,22 @@ final class PlaybackController: ObservableObject {
             }
         } catch APIError.unauthorized {
             auth.logout()
+        } catch APIError.transport(let urlError) {
+            // No network: if we have the audio on disk and a snapshot, allow
+            // local playback without claiming the server session. The user gets
+            // immediate listening; on reconnect, the next saveProgress reveals
+            // any server-side displacement and the existing handler runs.
+            if let episode = currentEpisode,
+               downloader.cachedFileURL(episodeId: episode.id) != nil {
+                sessionState = .active
+                isOffline = true
+                if !player.isPlaying, !replayConfirmNeeded, !player.playbackUnsupported {
+                    player.togglePlayback()
+                }
+            } else {
+                sessionState = fallbackState
+                loadError = urlError.localizedDescription
+            }
         } catch {
             sessionState = fallbackState
             loadError = errorMessage(error)
@@ -315,13 +480,34 @@ final class PlaybackController: ObservableObject {
     private func saveProgress(positionMs: Int, durationMs: Int?, completed: Bool) async -> Bool {
         guard sessionState == .active,
               let episode = currentEpisode,
-              let token = auth.playerSessionToken,
-              let client = APIClient(auth: auth),
               !player.playbackUnsupported else { return false }
         // Always allow the completion write through, even if the position has
         // not advanced since the last save (the natural-end tick can land on
         // the same ms as the prior periodic tick).
         if positionMs == lastSavedPositionMs && !completed { return true }
+
+        // Update the on-disk snapshot first so the offline UI reflects the
+        // playhead even when the server write is queued.
+        persistSnapshot(progressOverride: ProgressResponse(
+            position_ms: positionMs,
+            duration_ms: durationMs,
+            completed: completed,
+            last_played_at: nil
+        ))
+
+        // Without a player session token we can't write to the server. Queue
+        // locally and bail; the queue flushes on the next successful claim/save.
+        guard let token = auth.playerSessionToken,
+              let client = APIClient(auth: auth) else {
+            enqueuePendingProgress(
+                episodeId: episode.id,
+                positionMs: positionMs,
+                durationMs: durationMs,
+                completed: completed
+            )
+            return false
+        }
+
         do {
             try await client.saveProgress(
                 episodeId: episode.id,
@@ -331,6 +517,8 @@ final class PlaybackController: ObservableObject {
                 completed: completed
             )
             lastSavedPositionMs = positionMs
+            isOffline = false
+            await flushPendingProgress(client: client, playerToken: token)
             return true
         } catch APIError.sessionDisplaced {
             handleDisplacement()
@@ -338,9 +526,59 @@ final class PlaybackController: ObservableObject {
         } catch APIError.unauthorized {
             auth.logout()
             return false
-        } catch {
-            // Transient: keep playing; the next tick or pause retries.
+        } catch APIError.transport {
+            isOffline = true
+            enqueuePendingProgress(
+                episodeId: episode.id,
+                positionMs: positionMs,
+                durationMs: durationMs,
+                completed: completed
+            )
             return false
+        } catch {
+            // Transient non-transport: keep playing; the next tick or pause retries.
+            return false
+        }
+    }
+
+    private func enqueuePendingProgress(
+        episodeId: Int,
+        positionMs: Int,
+        durationMs: Int?,
+        completed: Bool
+    ) {
+        pendingProgressStore?.append(PendingProgressEntry(
+            episodeId: episodeId,
+            positionMs: positionMs,
+            durationMs: durationMs,
+            completed: completed,
+            recordedAt: Date()
+        ))
+    }
+
+    private func flushPendingProgress(client: APIClient, playerToken: String) async {
+        guard let store = pendingProgressStore else { return }
+        let pending = store.snapshotForFlush()
+        for entry in pending {
+            // Skip the entry that matches the just-sent write — it would be a
+            // no-op duplicate and the call site already cleared lastSavedPositionMs.
+            if entry.episodeId == currentEpisode?.id, entry.positionMs == lastSavedPositionMs {
+                store.remove(episodeId: entry.episodeId, recordedAtOrBefore: entry.recordedAt)
+                continue
+            }
+            do {
+                try await client.saveProgress(
+                    episodeId: entry.episodeId,
+                    playerToken: playerToken,
+                    positionMs: entry.positionMs,
+                    durationMs: entry.durationMs,
+                    completed: entry.completed
+                )
+                store.remove(episodeId: entry.episodeId, recordedAtOrBefore: entry.recordedAt)
+            } catch {
+                // Stop flushing on the first failure; we'll retry on the next save.
+                return
+            }
         }
     }
 
@@ -371,15 +609,57 @@ final class PlaybackController: ObservableObject {
 
     private func resetForLogout() {
         stopProgressTimer()
+        inflightPlayTask?.cancel()
+        inflightPlayTask = nil
+        downloader.cancelActive()
+        try? downloader.purgeAll()
+        try? snapshotStore?.clear()
+        pendingProgressStore?.clear()
         player.stop()
         currentEpisode = nil
         currentShow = nil
+        cachedChapters = []
         sessionState = .inactive
         loadError = nil
         replayConfirmNeeded = false
         isExpanded = false
         resumePositionMs = 0
         lastSavedPositionMs = -1
+        phase = .idle
+        isOffline = false
+    }
+
+    // MARK: - Snapshot
+
+    /// Persist the current Now Playing state to disk so the next launch (online
+    /// or offline) can hydrate the mini bar before any network call.
+    private func persistSnapshot(
+        progressOverride: ProgressResponse? = nil,
+        downloadedFileExtensionOverride: String? = nil
+    ) {
+        guard let store = snapshotStore,
+              let episode = currentEpisode,
+              let show = currentShow else { return }
+        let existing = store.load()
+        let progress = progressOverride
+            ?? existing?.progress
+            ?? ProgressResponse(
+                position_ms: resumePositionMs,
+                duration_ms: nil,
+                completed: replayConfirmNeeded,
+                last_played_at: nil
+            )
+        let extName = downloadedFileExtensionOverride
+            ?? existing?.downloadedFileExtension
+        let snapshot = PlaybackSnapshot(
+            episode: episode,
+            show: show,
+            chapters: cachedChapters,
+            progress: progress,
+            downloadedFileExtension: extName,
+            updatedAt: Date()
+        )
+        try? store.save(snapshot)
     }
 
     // MARK: - Helpers

@@ -64,8 +64,9 @@ final class AudioPlayerViewModel: ObservableObject {
         stop()
         guard configureAudioSession() else { return }
 
-        // AVURLAssetHTTPHeaderFieldsKey lets AVPlayer attach our bearer token to the
-        // backend audio-stream request (and to every range request it issues).
+        // AVURLAssetHTTPHeaderFieldsKey lets AVPlayer attach headers (e.g. a bearer
+        // token) for remote URLs. Local file playback passes [:] — the parameter
+        // is kept so callers don't churn if a future code path needs streaming.
         var assetOptions: [String: Any] = [:]
         if !httpHeaders.isEmpty {
             assetOptions["AVURLAssetHTTPHeaderFieldsKey"] = httpHeaders

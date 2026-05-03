@@ -14,12 +14,16 @@ struct NowPlayingSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scrubberProgress: Double = 0
     @State private var isScrubbing = false
-    @State private var chapters: [Chapter] = []
 
     init(controller: PlaybackController) {
         self.controller = controller
         self.player = controller.player
     }
+
+    // Drive the chapters list off the controller's cached chapters so the sheet
+    // renders chapters offline (hydrated from the snapshot at launch). The
+    // server-fetched value is pushed back into the controller's cache.
+    private var chapters: [Chapter] { controller.cachedChapters }
 
     var body: some View {
         NavigationStack {
@@ -85,21 +89,18 @@ struct NowPlayingSheet: View {
 
     private func loadChapters(for episodeId: Int?) async {
         guard let episodeId else {
-            chapters = []
+            controller.updateCachedChapters([])
             return
         }
-        guard let client = APIClient(auth: controller.auth) else {
-            chapters = []
-            return
-        }
+        guard let client = APIClient(auth: controller.auth) else { return }
         do {
             let detail = try await client.getEpisodeDetail(episodeId: episodeId)
-            chapters = detail.chapters ?? []
+            controller.updateCachedChapters(detail.chapters ?? [])
         } catch APIError.unauthorized {
             controller.auth.logout()
-            chapters = []
         } catch {
-            chapters = []
+            // Transport / other failures: keep the cached chapters in place so
+            // the offline sheet still renders the last-known list.
         }
     }
 
@@ -201,65 +202,118 @@ struct NowPlayingSheet: View {
 
     @ViewBuilder
     private var playbackControls: some View {
-        switch controller.sessionState {
-        case .displaced:
-            Button { controller.requestTakeOver() } label: {
-                Label("Take Over Playback", systemImage: "arrow.uturn.right.circle.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.orange)
-        case .inactive:
-            Button { controller.requestActivate() } label: {
-                Label("Start Playback", systemImage: "play.circle.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        case .activating:
-            Button {} label: {
-                Label("Connecting…", systemImage: "hourglass")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(true)
-        case .active:
-            HStack(spacing: 16) {
-                Button { controller.skip(by: -15) } label: {
-                    Image(systemName: "gobackward.15")
-                        .font(.title2)
+        if controller.phase.isBusy {
+            downloadProgressControls
+        } else {
+            switch controller.sessionState {
+            case .displaced:
+                Button { controller.requestTakeOver() } label: {
+                    Label("Take Over Playback", systemImage: "arrow.uturn.right.circle.fill")
                         .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(!player.hasDuration)
-
-                Button { controller.togglePlayback() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .frame(maxWidth: .infinity)
-                        .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(
-                    !player.hasLoadedAudio
-                    || player.isLoading
-                    || controller.replayConfirmNeeded
-                    || player.playbackUnsupported
-                )
-
-                Button { controller.skip(by: 30) } label: {
-                    Image(systemName: "goforward.30")
-                        .font(.title2)
+                .tint(.orange)
+            case .inactive:
+                Button { controller.requestActivate() } label: {
+                    Label("Start Playback", systemImage: "play.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!player.hasDuration)
+            case .activating:
+                Button {} label: {
+                    Label("Connecting…", systemImage: "hourglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(true)
+            case .active:
+                if controller.needsResumeFromSnapshot {
+                    Button { controller.resumeFromSnapshot() } label: {
+                        Label("Resume", systemImage: "play.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                } else {
+                    HStack(spacing: 16) {
+                        Button { controller.skip(by: -15) } label: {
+                            Image(systemName: "gobackward.15")
+                                .font(.title2)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .disabled(!player.hasDuration)
+
+                        Button { controller.togglePlayback() } label: {
+                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.title2)
+                                .frame(maxWidth: .infinity)
+                                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(
+                            !player.hasLoadedAudio
+                            || player.isLoading
+                            || controller.replayConfirmNeeded
+                            || player.playbackUnsupported
+                        )
+
+                        Button { controller.skip(by: 30) } label: {
+                            Image(systemName: "goforward.30")
+                                .font(.title2)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .disabled(!player.hasDuration)
+                    }
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var downloadProgressControls: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Label(downloadStatusLabel, systemImage: "arrow.down.circle")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Button("Cancel") { controller.cancelDownload() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            ProgressView(value: downloadFraction)
+                .progressViewStyle(.linear)
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.background.secondary)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var downloadFraction: Double {
+        if case .downloading(let f) = controller.phase {
+            return min(max(f, 0), 1)
+        }
+        return 0
+    }
+
+    private var downloadStatusLabel: String {
+        switch controller.phase {
+        case .preparing: return "Preparing…"
+        case .downloading(let f): return "Downloading \(Int(f * 100))%"
+        default: return "Loading…"
         }
     }
 

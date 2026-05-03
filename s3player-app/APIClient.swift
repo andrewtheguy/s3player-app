@@ -91,6 +91,8 @@ struct APIClient {
         ["Authorization": "Bearer \(token)"]
     }
 
+    var bearerToken: String { token }
+
     func getProgress(episodeId: Int) async throws -> ProgressResponse {
         try await get("api/player/episodes/\(episodeId)/progress")
     }
