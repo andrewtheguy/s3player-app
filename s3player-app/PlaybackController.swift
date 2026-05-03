@@ -55,6 +55,11 @@ final class PlaybackController: ObservableObject {
 
     private let snapshotStore: PlaybackSnapshotStore?
     private let pendingProgressStore: PendingProgressStore?
+    /// Mirror of the on-disk snapshot. Read instead of calling
+    /// `snapshotStore.load()` on the hot path (every 5 s progress save).
+    /// Kept in sync with disk: assigned in init from the initial load and
+    /// after every successful `store.save(...)`; cleared on logout.
+    private var cachedSnapshot: PlaybackSnapshot?
 
     init(auth: AuthViewModel) {
         self.auth = auth
@@ -65,7 +70,9 @@ final class PlaybackController: ObservableObject {
         // Hydrate the Now Playing UI from the on-disk snapshot before any
         // network call. The mini bar renders immediately even offline; the
         // user must still tap play to claim a session and start audio.
-        if let snapshot = snapshotStore?.load() {
+        let initialSnapshot = snapshotStore?.load()
+        self.cachedSnapshot = initialSnapshot
+        if let snapshot = initialSnapshot {
             currentEpisode = snapshot.episode
             currentShow = snapshot.show
             cachedChapters = snapshot.chapters
@@ -289,17 +296,20 @@ final class PlaybackController: ObservableObject {
 
         if Task.isCancelled { return }
 
-        if !progressFetched, let snapshot = snapshotStore?.load(), snapshot.episode.id == episode.id {
+        if !progressFetched,
+           let snapshot = cachedSnapshot,
+           snapshot.episode.id == episode.id {
             replayConfirmNeeded = snapshot.progress.completed
             resumePositionMs = snapshot.progress.position_ms
         }
 
         // Persist the snapshot now that we have the latest known progress, even
         // if the audio file isn't on disk yet — the mini bar should show the
-        // correct resume time as soon as possible.
+        // correct resume time as soon as possible. Pull duration_ms from the
+        // in-memory cache so we don't hit disk twice in a row.
         persistSnapshot(progressOverride: ProgressResponse(
             position_ms: resumePositionMs,
-            duration_ms: snapshotStore?.load()?.progress.duration_ms,
+            duration_ms: cachedSnapshot?.progress.duration_ms,
             completed: replayConfirmNeeded,
             last_played_at: nil
         ))
@@ -614,6 +624,7 @@ final class PlaybackController: ObservableObject {
         downloader.cancelActive()
         try? downloader.purgeAll()
         try? snapshotStore?.clear()
+        cachedSnapshot = nil
         pendingProgressStore?.clear()
         player.stop()
         currentEpisode = nil
@@ -632,7 +643,9 @@ final class PlaybackController: ObservableObject {
     // MARK: - Snapshot
 
     /// Persist the current Now Playing state to disk so the next launch (online
-    /// or offline) can hydrate the mini bar before any network call.
+    /// or offline) can hydrate the mini bar before any network call. Reads from
+    /// `cachedSnapshot` instead of `store.load()` to avoid a disk read on every
+    /// 5-second progress save.
     private func persistSnapshot(
         progressOverride: ProgressResponse? = nil,
         downloadedFileExtensionOverride: String? = nil
@@ -640,7 +653,7 @@ final class PlaybackController: ObservableObject {
         guard let store = snapshotStore,
               let episode = currentEpisode,
               let show = currentShow else { return }
-        let existing = store.load()
+        let existing = cachedSnapshot
         let progress = progressOverride
             ?? existing?.progress
             ?? ProgressResponse(
@@ -659,7 +672,13 @@ final class PlaybackController: ObservableObject {
             downloadedFileExtension: extName,
             updatedAt: Date()
         )
-        try? store.save(snapshot)
+        do {
+            try store.save(snapshot)
+            cachedSnapshot = snapshot
+        } catch {
+            // Failed disk write: leave cachedSnapshot untouched so the next
+            // attempt sees the same baseline (don't pretend the write landed).
+        }
     }
 
     // MARK: - Helpers
