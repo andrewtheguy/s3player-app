@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 struct PlaybackSnapshot: Codable, Hashable {
     var episode: Episode
@@ -87,6 +88,8 @@ final class PlaybackSnapshotStore {
 
 @MainActor
 final class PendingProgressStore {
+    private static let log = Logger(subsystem: "s3player-app", category: "PendingProgressStore")
+
     private let fileURL: URL
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -144,7 +147,26 @@ final class PendingProgressStore {
     }
 
     private func persist() {
-        guard let data = try? encoder.encode(entries) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        let data: Data
+        do {
+            data = try encoder.encode(entries)
+        } catch {
+            // Encoding `[PendingProgressEntry]` should never fail in practice
+            // (the type is plain `Codable` value-types). Log loud so we notice
+            // if it does — losing the queue silently would drop offline progress.
+            Self.log.error(
+                "PendingProgressStore.persist: encode failed for \(self.entries.count, privacy: .public) entries at \(self.fileURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return
+        }
+        do {
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            // Disk full / sandbox issue / permission anomaly: the queue stays in
+            // memory but won't survive a crash. Surface it instead of swallowing.
+            Self.log.error(
+                "PendingProgressStore.persist: write failed at \(self.fileURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 }
