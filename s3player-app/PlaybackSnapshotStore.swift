@@ -33,8 +33,20 @@ final class PlaybackSnapshotStore {
 
     private static let currentVersion = 1
     private let fileURL: URL
-    private let encoder = CatalogDecoder.makeEncoder()
-    private let decoder = CatalogDecoder.make()
+    // Snapshot dates include `updatedAt` (a full timestamp) alongside
+    // `Episode.aired_on` (date-only). Use ISO 8601 so the timestamp survives
+    // the round-trip; `aired_on` becomes a midnight-UTC instant on disk, which
+    // is internal-only and harmless.
+    private let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
 
     init() throws {
         let support = try FileManager.default.url(
