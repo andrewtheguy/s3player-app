@@ -235,8 +235,11 @@ extension AudioDownloader: URLSessionDownloadDelegate {
     ) {
         guard totalBytesExpectedToWrite > 0 else { return }
         let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        Task { @MainActor [weak self] in
-            self?.activeProgress?(min(max(fraction, 0), 1))
+        Task { @MainActor [weak self, downloadTask] in
+            // Identity-scope the progress update so a stale taskA's bytes don't
+            // get reported into taskB's progress callback after a fast swap.
+            guard let self, self.activeTask === downloadTask else { return }
+            self.activeProgress?(min(max(fraction, 0), 1))
         }
     }
 
@@ -257,7 +260,13 @@ extension AudioDownloader: URLSessionDownloadDelegate {
         // diagnosable runtime trap on a non-main queue.
         dispatchPrecondition(condition: .onQueue(.main))
         MainActor.assumeIsolated {
-            guard let episodeId = self.activeEpisodeId else { return }
+            // Identity check: only the *current* active task may finalize. A
+            // stale callback (taskA finished but taskB has since taken its
+            // place) would otherwise move A's bytes into B's destination and
+            // resume B's continuation with A's content. Bail out early — the
+            // OS will delete the temp file when this delegate returns.
+            guard self.activeTask === downloadTask,
+                  let episodeId = self.activeEpisodeId else { return }
 
             // Recompute destination with the actual extension so e.g. an m4a
             // doesn't sit on disk as `.mp3`.
@@ -306,11 +315,16 @@ extension AudioDownloader: URLSessionDownloadDelegate {
         // Same delegateQueue: .main coupling as above — see `session` initializer.
         dispatchPrecondition(condition: .onQueue(.main))
         MainActor.assumeIsolated {
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                // cancelTask() already resumed the continuation. Don't touch
+                // anything else — `task` may already have been superseded.
+                return
+            }
+            // Identity check: a stale taskA failure must NOT be allowed to call
+            // completeWithError, because that would resume taskB's continuation
+            // with the wrong error.
+            guard self.activeTask === task else { return }
             if let urlError = error as? URLError {
-                if urlError.code == .cancelled {
-                    // cancelActive() already resumed the continuation.
-                    return
-                }
                 self.completeWithError(.transport(urlError))
             } else {
                 self.completeWithError(.fileSystem(error))
