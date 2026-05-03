@@ -72,27 +72,52 @@ struct MiniNowPlayingBar: View {
     }
 
     private var progressFraction: Double {
+        if case .downloading(let fraction) = controller.phase {
+            return min(max(fraction, 0), 1)
+        }
         guard player.hasDuration else { return 0 }
         return min(max(player.progress, 0), 1)
     }
 
     private var progressText: String {
+        switch controller.phase {
+        case .preparing:
+            return "Preparing…"
+        case .downloading(let fraction):
+            return "Downloading \(Int(fraction * 100))%"
+        default:
+            break
+        }
         guard player.hasDuration else { return "--:-- / --:--" }
         return "\(player.formattedTime(player.elapsedTime)) / \(player.formattedTime(player.duration))"
     }
 
+    @ViewBuilder
     private var sessionStatusBadge: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(sessionStatusColor)
-                .frame(width: 6, height: 6)
-            Text(sessionStatusText)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(sessionStatusColor)
+        if controller.isOffline {
+            HStack(spacing: 4) {
+                Image(systemName: "wifi.slash")
+                    .font(.caption2.weight(.semibold))
+                Text("Offline")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.12), in: Capsule())
+        } else {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(sessionStatusColor)
+                    .frame(width: 6, height: 6)
+                Text(sessionStatusText)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(sessionStatusColor)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(sessionStatusColor.opacity(0.12), in: Capsule())
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(sessionStatusColor.opacity(0.12), in: Capsule())
     }
 
     private var sessionStatusText: String {
@@ -115,39 +140,48 @@ struct MiniNowPlayingBar: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        switch controller.sessionState {
-        case .active:
-            Button {
-                controller.togglePlayback()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .disabled(!player.hasLoadedAudio || player.isLoading)
-        case .inactive:
-            Button {
-                controller.requestActivate()
-            } label: {
-                Image(systemName: "play.circle.fill")
-                    .font(.title2)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-        case .displaced:
-            Button {
-                controller.requestTakeOver()
-            } label: {
-                Image(systemName: "arrow.uturn.right.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-        case .activating:
+        if controller.phase.isBusy {
             ProgressView()
                 .frame(width: 44, height: 44)
+        } else {
+            switch controller.sessionState {
+            case .active:
+                Button {
+                    if player.hasLoadedAudio {
+                        controller.togglePlayback()
+                    } else if controller.currentEpisode != nil {
+                        controller.resumeFromSnapshot()
+                    }
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title2)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .disabled(player.isLoading || (!player.hasLoadedAudio && controller.currentEpisode == nil))
+            case .inactive:
+                Button {
+                    controller.requestActivate()
+                } label: {
+                    Image(systemName: "play.circle.fill")
+                        .font(.title2)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+            case .displaced:
+                Button {
+                    controller.requestTakeOver()
+                } label: {
+                    Image(systemName: "arrow.uturn.right.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.orange)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+            case .activating:
+                ProgressView()
+                    .frame(width: 44, height: 44)
+            }
         }
     }
 }

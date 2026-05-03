@@ -26,7 +26,7 @@ struct ShowsResponse: Decodable {
     let shows: [Show]
 }
 
-struct ShowDetail: Decodable, Hashable, Identifiable {
+struct ShowDetail: Codable, Hashable, Identifiable {
     let id: Int
     let station: String
     let name: String
@@ -44,13 +44,13 @@ struct MonthsResponse: Decodable {
     let months: [MonthBucket]
 }
 
-struct Chapter: Decodable, Hashable {
+struct Chapter: Codable, Hashable {
     let title: String
     let start: Int
     let end: Int
 }
 
-struct Episode: Decodable, Hashable, Identifiable {
+struct Episode: Codable, Hashable, Identifiable {
     let id: Int
     let aired_on: Date
     let time_slot: String?
@@ -58,7 +58,7 @@ struct Episode: Decodable, Hashable, Identifiable {
     let chapters: [Chapter]?
 }
 
-struct EpisodeDetail: Decodable, Hashable, Identifiable {
+struct EpisodeDetail: Codable, Hashable, Identifiable {
     let id: Int
     let aired_on: Date
     let time_slot: String?
@@ -92,7 +92,7 @@ struct ProgressRequest: Encodable {
     let completed: Bool
 }
 
-struct ProgressResponse: Decodable {
+struct ProgressResponse: Codable, Hashable {
     let position_ms: Int
     let duration_ms: Int?
     let completed: Bool
@@ -116,15 +116,25 @@ struct RecentResponse: Decodable {
 }
 
 enum CatalogDecoder {
-    static func make() -> JSONDecoder {
-        let decoder = JSONDecoder()
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .iso8601)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
-        decoder.dateDecodingStrategy = .formatted(formatter)
+        return formatter
+    }()
+
+    static func make() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .formatted(dateFormatter)
         return decoder
+    }
+
+    static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .formatted(dateFormatter)
+        return encoder
     }
 }
 
