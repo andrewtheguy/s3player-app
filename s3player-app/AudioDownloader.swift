@@ -32,6 +32,11 @@ final class AudioDownloader: NSObject {
         // Per plan: download on any connection (Wi-Fi or cellular).
         config.allowsCellularAccess = true
         config.waitsForConnectivity = false
+        // delegateQueue: .main is load-bearing. The URLSessionDownloadDelegate
+        // callbacks below use MainActor.assumeIsolated to touch main-actor state
+        // synchronously (so we can move the temp file before URLSession deletes
+        // it). If you change this queue, you MUST hop to the main actor with
+        // MainActor.run and accept that the temp file will be gone by then.
         return URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }()
 
@@ -57,15 +62,10 @@ final class AudioDownloader: NSObject {
             return cached
         }
 
-        // If a download for a different episode is in flight, cancel it so its
-        // awaiter unblocks before we start the new one.
-        if activeEpisodeId != nil, activeEpisodeId != episodeId {
-            cancelActive()
-        }
-
-        // If the same episode is already downloading, surface a cancellation —
-        // callers shouldn't expect coalescing semantics in v1.
-        if activeEpisodeId == episodeId {
+        // If any download is in flight, cancel it so its awaiter unblocks before
+        // we start the new one. This covers both episode-swap and same-episode
+        // re-entry — callers shouldn't expect coalescing semantics in v1.
+        if activeEpisodeId != nil {
             cancelActive()
         }
 
@@ -236,9 +236,11 @@ extension AudioDownloader: URLSessionDownloadDelegate {
         let response = downloadTask.response
         let ext = Self.fileExtension(for: response)
 
-        // Read main-actor state via a sync hop. The delegate queue IS the main
-        // queue (we configured delegateQueue: .main), so this is safe — but we
-        // still mark it MainActor.assumeIsolated to keep Swift's checker happy.
+        // The delegate queue IS the main queue (see `session` initializer above
+        // — delegateQueue: .main is load-bearing). Fail fast in debug if anyone
+        // changes that, since assumeIsolated would otherwise crash with a less
+        // diagnosable runtime trap on a non-main queue.
+        dispatchPrecondition(condition: .onQueue(.main))
         MainActor.assumeIsolated {
             guard let episodeId = self.activeEpisodeId else { return }
 
@@ -286,6 +288,8 @@ extension AudioDownloader: URLSessionDownloadDelegate {
         didCompleteWithError error: Error?
     ) {
         guard let error else { return } // success path is handled in didFinishDownloadingTo
+        // Same delegateQueue: .main coupling as above — see `session` initializer.
+        dispatchPrecondition(condition: .onQueue(.main))
         MainActor.assumeIsolated {
             if let urlError = error as? URLError {
                 if urlError.code == .cancelled {
