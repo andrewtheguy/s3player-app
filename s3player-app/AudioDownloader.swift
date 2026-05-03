@@ -192,7 +192,8 @@ final class AudioDownloader: NSObject {
         if let mime = response?.mimeType?.lowercased() {
             switch mime {
             case "audio/mpeg", "audio/mp3": return "mp3"
-            case "audio/mp4", "audio/x-m4a", "audio/aac": return "m4a"
+            case "audio/mp4", "audio/x-m4a": return "m4a"
+            case "audio/aac": return "aac"
             case "audio/ogg": return "ogg"
             case "audio/wav", "audio/x-wav": return "wav"
             case "audio/flac", "audio/x-flac": return "flac"
