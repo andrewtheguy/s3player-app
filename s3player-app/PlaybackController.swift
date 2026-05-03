@@ -400,14 +400,22 @@ final class PlaybackController: ObservableObject {
             auth.setPlayerSessionToken(claim.session_token)
             sessionState = .active
             isOffline = false
-            // Sync to the latest server-side position so a take-over (or a delayed
-            // Start Playback) resumes from wherever the prior holder left off,
-            // not the snapshot we fetched at beginPlay time.
+            // Fresh-launch path: snapshot hydrated currentEpisode/currentShow but
+            // the player asset is unloaded. togglePlayback() would no-op — kick
+            // off the download/prepare flow instead. play() will re-fetch
+            // progress and auto-toggle on completion.
+            if !player.hasLoadedAudio,
+               let episode = currentEpisode,
+               let show = currentShow {
+                play(episode: episode, show: show)
+                return
+            }
+            // Already-loaded path: sync to the latest server-side position so a
+            // take-over (or a delayed Start Playback) resumes from wherever the
+            // prior holder left off, not the snapshot we fetched at beginPlay
+            // time. Then start playback. Skip auto-play when a replay gate or
+            // unplayable asset is in the way — either is "needs user action".
             await syncResumePositionFromServer(client: client)
-            // A successful claim should leave the prepared player running, even if
-            // overlapping claim completions arrive after playback has already started.
-            // Skip auto-play when a replay gate or unplayable asset is in the way —
-            // either is an explicit "needs user action" state.
             if !player.isPlaying, !replayConfirmNeeded, !player.playbackUnsupported {
                 player.togglePlayback()
             }
@@ -419,10 +427,15 @@ final class PlaybackController: ObservableObject {
             // immediate listening; on reconnect, the next saveProgress reveals
             // any server-side displacement and the existing handler runs.
             if let episode = currentEpisode,
+               let show = currentShow,
                downloader.cachedFileURL(episodeId: episode.id) != nil {
                 sessionState = .active
                 isOffline = true
-                if !player.isPlaying, !replayConfirmNeeded, !player.playbackUnsupported {
+                if !player.hasLoadedAudio {
+                    // Same fresh-launch case as the online path: prepare the
+                    // cached audio before trying to play.
+                    play(episode: episode, show: show)
+                } else if !player.isPlaying, !replayConfirmNeeded, !player.playbackUnsupported {
                     player.togglePlayback()
                 }
             } else {
