@@ -132,9 +132,16 @@ fi
 
 /bin/mkdir -p "$(/usr/bin/dirname "$ARCHIVE_PATH")"
 
+# Clear both outputs up front so a failure mid-flight cannot leave a stale
+# .ipa from a previous run sitting next to a new (or missing) .xcarchive.
 if [[ -e "$ARCHIVE_PATH" ]]; then
   echo "Replacing existing archive: $ARCHIVE_PATH"
   /bin/rm -rf "$ARCHIVE_PATH"
+fi
+
+if [[ -e "$EXPORT_PATH" ]]; then
+  echo "Replacing existing export directory: $EXPORT_PATH"
+  /bin/rm -rf "$EXPORT_PATH"
 fi
 
 provisioning_args=()
