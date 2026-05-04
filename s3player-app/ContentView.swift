@@ -60,13 +60,8 @@ extension View {
 
 struct ContentView: View {
     @ObservedObject var auth: AuthViewModel
-    @StateObject private var playback: PlaybackController
+    @ObservedObject var playback: PlaybackController
     @StateObject private var navigation = NavigationCoordinator()
-
-    init(auth: AuthViewModel) {
-        self.auth = auth
-        _playback = StateObject(wrappedValue: PlaybackController(auth: auth))
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,5 +85,6 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(auth: AuthViewModel())
+    let auth = AuthViewModel()
+    return ContentView(auth: auth, playback: PlaybackController(auth: auth))
 }

@@ -9,7 +9,16 @@ import SwiftUI
 
 @main
 struct s3player_appApp: App {
-    @StateObject private var auth = AuthViewModel()
+    @StateObject private var auth: AuthViewModel
+    @StateObject private var playback: PlaybackController
+
+    init() {
+        let auth = AuthViewModel()
+        _auth = StateObject(wrappedValue: auth)
+        // Owned at App scope so closing the only window on macOS does not
+        // deallocate the AVPlayer and stop background audio.
+        _playback = StateObject(wrappedValue: PlaybackController(auth: auth))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -17,7 +26,7 @@ struct s3player_appApp: App {
                 if auth.isValidatingPlayerSession || auth.playerSessionValidationError != nil {
                     SessionValidationView(auth: auth)
                 } else {
-                    ContentView(auth: auth)
+                    ContentView(auth: auth, playback: playback)
                 }
             } else {
                 LoginView(auth: auth)
