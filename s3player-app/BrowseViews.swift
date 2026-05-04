@@ -508,12 +508,15 @@ private struct EpisodeDetailView: View {
     @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<EpisodeDetail> = .idle
     @State private var savedProgress: ProgressResponse?
+    @State private var summariesState: LoadState<[ChapterSummary]> = .idle
+    @State private var expandedSummaries: Set<Int> = []
     private static let progressRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
         List {
             summarySection
             detailsSections
+            chapterSummariesSection
         }
         .navigationTitle("Episode")
         #if os(iOS)
@@ -672,6 +675,78 @@ private struct EpisodeDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var chapterSummariesSection: some View {
+        switch summariesState {
+        case .idle, .loading:
+            Section("Chapter summaries") {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Loading chapter summaries…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .failed(let message):
+            Section("Chapter summaries") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await loadSummaries() } }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 4)
+            }
+        case .loaded(let summaries) where summaries.isEmpty:
+            EmptyView()
+        case .loaded(let summaries):
+            Section {
+                ForEach(summaries) { summary in
+                    chapterSummaryRow(summary)
+                }
+            } header: {
+                HStack {
+                    Text("Chapter summaries")
+                    Spacer()
+                    Text("\(summaries.count)")
+                        .foregroundStyle(.secondary)
+                        .font(.caption.monospacedDigit())
+                }
+            }
+        }
+    }
+
+    private func chapterSummaryRow(_ summary: ChapterSummary) -> some View {
+        let isOpen = expandedSummaries.contains(summary.index)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if isOpen { expandedSummaries.remove(summary.index) }
+                else { expandedSummaries.insert(summary.index) }
+            } label: {
+                HStack {
+                    Text(String(format: "Chapter %02d", summary.index))
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isOpen ? "Collapse summary" : "Expand summary")
+
+            if isOpen {
+                Text(summary.content)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func load() async {
         guard let client = APIClient(auth: auth) else {
             state = .failed("Not signed in.")
@@ -697,6 +772,24 @@ private struct EpisodeDetailView: View {
             auth.logout()
         } catch {
             state = .failed(errorMessage(error))
+        }
+
+        await loadSummaries()
+    }
+
+    private func loadSummaries() async {
+        guard let client = APIClient(auth: auth) else {
+            summariesState = .failed("Not signed in.")
+            return
+        }
+        summariesState = .loading
+        do {
+            let response = try await client.getChapterSummaries(episodeId: route.episode.id)
+            summariesState = .loaded(response.summaries)
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            summariesState = .failed(errorMessage(error))
         }
     }
 

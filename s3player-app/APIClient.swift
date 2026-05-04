@@ -83,6 +83,10 @@ struct APIClient {
         try await get("api/shows/episodes/\(episodeId)")
     }
 
+    func getChapterSummaries(episodeId: Int) async throws -> ChapterSummariesResponse {
+        try await get("api/shows/episodes/\(episodeId)/chapter_summaries")
+    }
+
     func audioStreamURL(episodeId: Int) -> URL? {
         host.appendingPathComponent("api/shows/episodes/\(episodeId)/audio")
     }

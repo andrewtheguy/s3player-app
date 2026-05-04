@@ -50,6 +50,17 @@ struct Chapter: Codable, Hashable {
     let end: Int
 }
 
+struct ChapterSummary: Decodable, Hashable, Identifiable {
+    let index: Int
+    let content: String
+
+    var id: Int { index }
+}
+
+struct ChapterSummariesResponse: Decodable {
+    let summaries: [ChapterSummary]
+}
+
 struct Episode: Codable, Hashable, Identifiable {
     let id: Int
     let aired_on: Date
