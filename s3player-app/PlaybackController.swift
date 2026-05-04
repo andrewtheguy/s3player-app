@@ -67,6 +67,15 @@ final class PlaybackController: ObservableObject {
         self.pendingProgressStore = try? PendingProgressStore()
         sessionState = auth.playerSessionToken != nil ? .active : .inactive
 
+        // Reject lock-screen / Control Center "start playback" commands while
+        // the session isn't active. Without this gate a Play tap would call
+        // AVPlayer.play() directly and resume audio while sessionState stays
+        // .displaced, leaving the in-app UI showing "Take Over Playback".
+        player.canStartRemotePlayback = { [weak self] in
+            self?.canControlPlayback ?? false
+        }
+        player.setRemotePlayCommandEnabled(canControlPlayback)
+
         // Hydrate the Now Playing UI from the on-disk snapshot before any
         // network call. The mini bar renders immediately even offline; the
         // user must still tap play to claim a session and start audio.
@@ -143,6 +152,23 @@ final class PlaybackController: ObservableObject {
                 self.loadError = "This episode reports no duration and can't be played."
             }
             .store(in: &cancellables)
+
+        // Mirror canControlPlayback onto the lock-screen / Control Center
+        // play & toggle commands. Disabled buttons render grayed out and
+        // can't fire, complementing the in-handler gate.
+        Publishers.CombineLatest3(
+            $sessionState,
+            $replayConfirmNeeded,
+            player.$playbackUnsupported
+        )
+        .map { state, replayNeeded, unsupported in
+            state == .active && !replayNeeded && !unsupported
+        }
+        .removeDuplicates()
+        .sink { [weak self] enabled in
+            self?.player.setRemotePlayCommandEnabled(enabled)
+        }
+        .store(in: &cancellables)
     }
 
     // MARK: - Public API

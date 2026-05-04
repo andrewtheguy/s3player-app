@@ -32,6 +32,13 @@ final class AudioPlayerViewModel: ObservableObject {
     private var didReachReadyToPlay = false
     private var remoteCommandTokens: [(MPRemoteCommand, Any)] = []
 
+    /// Gate consulted by lock-screen / Control Center "play" or
+    /// toggle-while-paused commands. Remote commands bypass the in-app
+    /// `PlaybackController.togglePlayback()` session check, so without this
+    /// gate a stale lock-screen Play button can resume audio while the session
+    /// is `.displaced`, producing an inconsistent UI.
+    var canStartRemotePlayback: () -> Bool = { true }
+
     deinit {
         // MPRemoteCommandCenter retains every closure added via addTarget(handler:).
         // Without this cleanup, each PlayerView instance leaks 6 closures into the
@@ -340,7 +347,13 @@ final class AudioPlayerViewModel: ObservableObject {
 
         let toggleToken = center.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
-            Task { @MainActor in self.togglePlayback() }
+            Task { @MainActor in
+                if self.isPlaying {
+                    self.togglePlayback()
+                } else if self.canStartRemotePlayback() {
+                    self.togglePlayback()
+                }
+            }
             return .success
         }
         remoteCommandTokens.append((center.togglePlayPauseCommand, toggleToken))
@@ -385,6 +398,7 @@ final class AudioPlayerViewModel: ObservableObject {
     nonisolated private func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
         Task { @MainActor [weak self] in
             guard let self, let player = self.player, !self.isPlaying else { return }
+            guard self.canStartRemotePlayback() else { return }
             player.play()
             self.isPlaying = true
             self.statusMessage = "Playing."
@@ -402,6 +416,16 @@ final class AudioPlayerViewModel: ObservableObject {
             self.updateNowPlayingInfo()
         }
         return .success
+    }
+
+    /// Toggle the lock-screen / Control Center "play" affordances. Pause stays
+    /// enabled unconditionally so the user can always stop audio. Pair this
+    /// with `canStartRemotePlayback` so a tap that slips through (button still
+    /// rendered between the disable and the next refresh) is also rejected.
+    func setRemotePlayCommandEnabled(_ enabled: Bool) {
+        let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = enabled
+        center.togglePlayPauseCommand.isEnabled = enabled
     }
 
     private func updateNowPlayingInfo() {
