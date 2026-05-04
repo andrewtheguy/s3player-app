@@ -14,6 +14,8 @@ struct NowPlayingSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scrubberProgress: Double = 0
     @State private var isScrubbing = false
+    @State private var chapterSummaries: [ChapterSummary] = []
+    @State private var expandedSummaries: Set<Int> = []
 
     init(controller: PlaybackController) {
         self.controller = controller
@@ -46,6 +48,9 @@ struct NowPlayingSheet: View {
                         if !chapters.isEmpty {
                             chaptersSection
                         }
+                        if !chapterSummaries.isEmpty {
+                            chapterSummariesSection
+                        }
                     }
                     statusView
                 }
@@ -77,12 +82,16 @@ struct NowPlayingSheet: View {
             }
             .task(id: controller.currentEpisode?.id) {
                 await loadChapters(for: controller.currentEpisode?.id)
+                await loadChapterSummaries(for: controller.currentEpisode?.id)
             }
             .onChange(of: controller.sessionState) { _, newState in
                 // Refetch chapters when the session is (re)claimed so any
                 // server-side edits land at the same moment we sync position.
                 guard newState == .active else { return }
-                Task { await loadChapters(for: controller.currentEpisode?.id) }
+                Task {
+                    await loadChapters(for: controller.currentEpisode?.id)
+                    await loadChapterSummaries(for: controller.currentEpisode?.id)
+                }
             }
         }
     }
@@ -104,6 +113,25 @@ struct NowPlayingSheet: View {
         }
     }
 
+    private func loadChapterSummaries(for episodeId: Int?) async {
+        guard let episodeId else {
+            chapterSummaries = []
+            expandedSummaries = []
+            return
+        }
+        guard let client = APIClient(auth: controller.auth) else { return }
+        do {
+            let response = try await client.getChapterSummaries(episodeId: episodeId)
+            chapterSummaries = response.summaries
+            expandedSummaries.formIntersection(response.summaries.map(\.index))
+        } catch APIError.unauthorized {
+            controller.auth.logout()
+        } catch {
+            // Transient failures keep the prior list visible so the sheet still
+            // renders summaries when offline after a successful first fetch.
+        }
+    }
+
     private var chaptersSection: some View {
         VStack(spacing: 0) {
             ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
@@ -120,6 +148,70 @@ struct NowPlayingSheet: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var chapterSummariesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Chapter summaries")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(chapterSummaries.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(chapterSummaries.enumerated()), id: \.element.index) { offset, summary in
+                    chapterSummaryRow(summary)
+                    if offset < chapterSummaries.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.background.secondary)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
+    }
+
+    private func chapterSummaryRow(_ summary: ChapterSummary) -> some View {
+        let isOpen = expandedSummaries.contains(summary.index)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if isOpen { expandedSummaries.remove(summary.index) }
+                else { expandedSummaries.insert(summary.index) }
+            } label: {
+                HStack(spacing: 12) {
+                    Text(String(format: "Chapter %02d", summary.index))
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isOpen ? "Collapse summary" : "Expand summary")
+
+            if isOpen {
+                Text(summary.content)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
         }
     }
 
