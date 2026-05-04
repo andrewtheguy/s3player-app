@@ -788,6 +788,8 @@ private struct EpisodeDetailView: View {
             summariesState = .loaded(response.summaries)
         } catch APIError.unauthorized {
             auth.logout()
+        } catch APIError.notFound {
+            summariesState = .loaded([])
         } catch {
             summariesState = .failed(errorMessage(error))
         }
