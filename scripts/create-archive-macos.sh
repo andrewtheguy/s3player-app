@@ -7,14 +7,14 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<USAGE
 Usage:
-  scripts/create-archive-ios.sh [TEAM_ID] [options]
-  scripts/create-archive-ios.sh --team-id <TEAM_ID> [options]
+  scripts/create-archive-macos.sh [TEAM_ID] [options]
+  scripts/create-archive-macos.sh --team-id <TEAM_ID> [options]
 
 Options:
   -t, --team-id TEAM_ID       Developer Team ID.
                               Defaults to the project DEVELOPMENT_TEAM when unique.
-  -a, --archive-path PATH     Output path for the iOS .xcarchive.
-                              Defaults to ./build/${APP_NAME}-ios.xcarchive.
+  -a, --archive-path PATH     Output path for the macOS .xcarchive.
+                              Defaults to ./build/${APP_NAME}-macos.xcarchive.
   -c, --configuration NAME    Build configuration. Defaults to Release.
   --allow-provisioning-updates
                               Let xcodebuild create or update signing assets.
@@ -31,7 +31,7 @@ die() {
 }
 
 TEAM_ID="${TEAM_ID:-}"
-ARCHIVE_PATH="${ARCHIVE_PATH:-$PROJECT_ROOT/build/${APP_NAME}-ios.xcarchive}"
+ARCHIVE_PATH="${ARCHIVE_PATH:-$PROJECT_ROOT/build/${APP_NAME}-macos.xcarchive}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 ALLOW_PROVISIONING_UPDATES="${ALLOW_PROVISIONING_UPDATES:-0}"
 
@@ -124,7 +124,7 @@ if [[ "$ALLOW_PROVISIONING_UPDATES" == "1" ]]; then
   provisioning_args=(-allowProvisioningUpdates)
 fi
 
-echo "Creating iOS archive:"
+echo "Creating macOS archive:"
 printf '  archive:       %s\n' "$ARCHIVE_PATH"
 printf '  configuration: %s\n' "$CONFIGURATION"
 printf '  team:          %s\n' "$TEAM_ID"
@@ -133,8 +133,8 @@ xcodebuild archive \
   -project "$PROJECT_ROOT/${APP_NAME}.xcodeproj" \
   -scheme "$APP_NAME" \
   -configuration "$CONFIGURATION" \
-  -destination "generic/platform=iOS" \
-  -sdk iphoneos \
+  -destination "generic/platform=macOS" \
+  -sdk macosx \
   -archivePath "$ARCHIVE_PATH" \
   "${provisioning_args[@]}" \
   DEVELOPMENT_TEAM="$TEAM_ID"

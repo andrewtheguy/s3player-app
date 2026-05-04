@@ -7,14 +7,14 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<USAGE
 Usage:
-  scripts/export-archive.sh [TEAM_ID] [options]
-  scripts/export-archive.sh --team-id <TEAM_ID> [options]
+  scripts/export-archive-ios.sh [TEAM_ID] [options]
+  scripts/export-archive-ios.sh --team-id <TEAM_ID> [options]
 
 Options:
   -t, --team-id TEAM_ID    Developer Team ID.
                            Defaults to the project DEVELOPMENT_TEAM when unique.
   -a, --archive-path PATH  Path to the .xcarchive.
-                           Defaults to ./build/${APP_NAME}.xcarchive.
+                           Defaults to ./build/${APP_NAME}-ios.xcarchive.
   -o, --export-path PATH   Output directory for the exported .ipa.
                            Defaults to ./build/export.
   -m, --method METHOD      Export method. Defaults to debugging.
@@ -31,7 +31,7 @@ die() {
 }
 
 TEAM_ID="${TEAM_ID:-}"
-ARCHIVE_PATH="${ARCHIVE_PATH:-$PROJECT_ROOT/build/${APP_NAME}.xcarchive}"
+ARCHIVE_PATH="${ARCHIVE_PATH:-$PROJECT_ROOT/build/${APP_NAME}-ios.xcarchive}"
 EXPORT_PATH="${EXPORT_PATH:-$PROJECT_ROOT/build/export}"
 METHOD="${METHOD:-debugging}"
 

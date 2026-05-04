@@ -105,21 +105,21 @@ Create an iOS device archive, then export a development `.ipa`:
 
 ```sh
 scripts/create-archive-ios.sh
-scripts/export-archive.sh
+scripts/export-archive-ios.sh
 ```
 
-The archive script writes an iOS-only archive to `./build/s3player-app.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`. The export script generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, then exports into `./build/export`.
+The archive script writes an iOS-only archive to `./build/s3player-app-ios.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`. The export script generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, then exports into `./build/export`.
 
 Use flags when you need an explicit team ID, explicit paths, or another export method:
 
 ```sh
 scripts/create-archive-ios.sh <TEAM_ID> \
-  --archive-path /path/to/s3player-app.xcarchive
+  --archive-path /path/to/s3player-app-ios.xcarchive
 
-scripts/export-archive.sh <TEAM_ID> \
-  --archive-path /path/to/s3player-app.xcarchive \
+scripts/export-archive-ios.sh <TEAM_ID> \
+  --archive-path /path/to/s3player-app-ios.xcarchive \
   --export-path /path/to/output \
-  --method debugging
+  --method debugging # Internal dev testing on registered devices.
 ```
 
 Install on a paired device:
@@ -129,4 +129,20 @@ xcrun devicectl list devices
 xcrun devicectl device install app --device <ID> ./build/export/s3player-app.ipa
 ```
 
-This script flow is for iOS device `.ipa` builds only. For macOS archives, use Xcode (`Product → Archive`) and export from Organizer.
+### macOS
+
+Use the convenience script instead of archiving from Xcode (`Product → Archive`) manually:
+
+```sh
+scripts/create-archive-macos.sh
+```
+
+This writes a macOS archive to `./build/s3player-app-macos.xcarchive` using `-destination 'generic/platform=macOS'` and `-sdk macosx`. Same flags/env overrides as the iOS script (`--team-id`, `--archive-path`, `--configuration`, `--allow-provisioning-updates`).
+
+Install the resulting `.app` into `/Applications` via Finder. Reveal it:
+
+```sh
+open ./build/s3player-app-macos.xcarchive/Products/Applications/
+```
+
+Then drag `s3player-app.app` onto `/Applications` in the Finder sidebar. If a previous version is already installed, quit it first and choose **Replace** when prompted.
