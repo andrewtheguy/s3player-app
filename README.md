@@ -101,22 +101,18 @@ All routes use `Authorization: Bearer <site-token>`. Session-protected routes ad
 
 ## Distribution
 
-Create an iOS device archive, then export a development `.ipa`:
+Create an iOS device archive and export a development `.ipa` in one step:
 
 ```sh
 scripts/create-archive-ios.sh
-scripts/export-archive-ios.sh
 ```
 
-The archive script writes an iOS-only archive to `./build/s3player-app-ios.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`. The export script generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, then exports into `./build/export`.
+The script writes an iOS-only archive to `./build/s3player-app-ios.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`, then generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, and exports into `./build/export`.
 
 Use flags when you need an explicit team ID, explicit paths, or another export method:
 
 ```sh
 scripts/create-archive-ios.sh <TEAM_ID> \
-  --archive-path /path/to/s3player-app-ios.xcarchive
-
-scripts/export-archive-ios.sh <TEAM_ID> \
   --archive-path /path/to/s3player-app-ios.xcarchive \
   --export-path /path/to/output \
   --method debugging # Internal dev testing on registered devices.
