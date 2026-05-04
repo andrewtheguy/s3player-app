@@ -10,18 +10,24 @@ Usage:
   scripts/create-archive-ios.sh [TEAM_ID] [options]
   scripts/create-archive-ios.sh --team-id <TEAM_ID> [options]
 
+Builds an iOS .xcarchive and exports it to a signed .ipa in one step.
+
 Options:
   -t, --team-id TEAM_ID       Developer Team ID.
                               Defaults to the project DEVELOPMENT_TEAM when unique.
   -a, --archive-path PATH     Output path for the iOS .xcarchive.
                               Defaults to ./build/${APP_NAME}-ios.xcarchive.
   -c, --configuration NAME    Build configuration. Defaults to Release.
+  -o, --export-path PATH      Output directory for the exported .ipa.
+                              Defaults to ./build/export.
+  -m, --method METHOD         Export method. Defaults to debugging.
   --allow-provisioning-updates
                               Let xcodebuild create or update signing assets.
   -h, --help                  Show this help.
 
 Environment overrides:
-  TEAM_ID, ARCHIVE_PATH, CONFIGURATION, ALLOW_PROVISIONING_UPDATES
+  TEAM_ID, ARCHIVE_PATH, CONFIGURATION, EXPORT_PATH, METHOD,
+  ALLOW_PROVISIONING_UPDATES
 USAGE
 }
 
@@ -33,6 +39,8 @@ die() {
 TEAM_ID="${TEAM_ID:-}"
 ARCHIVE_PATH="${ARCHIVE_PATH:-$PROJECT_ROOT/build/${APP_NAME}-ios.xcarchive}"
 CONFIGURATION="${CONFIGURATION:-Release}"
+EXPORT_PATH="${EXPORT_PATH:-$PROJECT_ROOT/build/export}"
+METHOD="${METHOD:-debugging}"
 ALLOW_PROVISIONING_UPDATES="${ALLOW_PROVISIONING_UPDATES:-0}"
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +58,16 @@ while [[ $# -gt 0 ]]; do
     -c|--configuration)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       CONFIGURATION="$2"
+      shift 2
+      ;;
+    -o|--export-path)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      EXPORT_PATH="$2"
+      shift 2
+      ;;
+    -m|--method)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      METHOD="$2"
       shift 2
       ;;
     --allow-provisioning-updates)
@@ -114,9 +132,16 @@ fi
 
 /bin/mkdir -p "$(/usr/bin/dirname "$ARCHIVE_PATH")"
 
+# Clear both outputs up front so a failure mid-flight cannot leave a stale
+# .ipa from a previous run sitting next to a new (or missing) .xcarchive.
 if [[ -e "$ARCHIVE_PATH" ]]; then
   echo "Replacing existing archive: $ARCHIVE_PATH"
   /bin/rm -rf "$ARCHIVE_PATH"
+fi
+
+if [[ -e "$EXPORT_PATH" ]]; then
+  echo "Replacing existing export directory: $EXPORT_PATH"
+  /bin/rm -rf "$EXPORT_PATH"
 fi
 
 provisioning_args=()
@@ -138,3 +163,29 @@ xcodebuild archive \
   -archivePath "$ARCHIVE_PATH" \
   "${provisioning_args[@]}" \
   DEVELOPMENT_TEAM="$TEAM_ID"
+
+/bin/mkdir -p "$EXPORT_PATH"
+
+TEMP_DIR="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/${APP_NAME}-export.XXXXXX")"
+cleanup() {
+  /bin/rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+EXPORT_OPTIONS_PLIST="$TEMP_DIR/ExportOptions.plist"
+/usr/bin/plutil -create xml1 "$EXPORT_OPTIONS_PLIST"
+/usr/libexec/PlistBuddy -c "Add :method string $METHOD" "$EXPORT_OPTIONS_PLIST"
+/usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" "$EXPORT_OPTIONS_PLIST"
+/usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$EXPORT_OPTIONS_PLIST"
+/usr/libexec/PlistBuddy -c "Add :destination string export" "$EXPORT_OPTIONS_PLIST"
+
+echo "Exporting archive:"
+printf '  archive: %s\n' "$ARCHIVE_PATH"
+printf '  export:  %s\n' "$EXPORT_PATH"
+printf '  method:  %s\n' "$METHOD"
+printf '  team:    %s\n' "$TEAM_ID"
+
+xcodebuild -exportArchive \
+  -archivePath "$ARCHIVE_PATH" \
+  -exportPath "$EXPORT_PATH" \
+  -exportOptionsPlist "$EXPORT_OPTIONS_PLIST"
