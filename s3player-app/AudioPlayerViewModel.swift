@@ -374,6 +374,23 @@ final class AudioPlayerViewModel: ObservableObject {
         }
         remoteCommandTokens.append((center.skipForwardCommand, skipForwardToken))
 
+        // Bluetooth remotes (AVRCP) send next/previous track rather than
+        // skip-interval. Map them to the same +30 / -15 actions so headset
+        // and car controls behave like the lock-screen skip buttons.
+        let nextTrackToken = center.nextTrackCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            Task { @MainActor in self.skip(by: 30) }
+            return .success
+        }
+        remoteCommandTokens.append((center.nextTrackCommand, nextTrackToken))
+
+        let previousTrackToken = center.previousTrackCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            Task { @MainActor in self.skip(by: -15) }
+            return .success
+        }
+        remoteCommandTokens.append((center.previousTrackCommand, previousTrackToken))
+
         let positionToken = center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard
                 let self,
