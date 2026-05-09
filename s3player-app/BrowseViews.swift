@@ -21,6 +21,7 @@ private enum RailKind {
 
 struct StationsView: View {
     @ObservedObject var auth: AuthViewModel
+    @EnvironmentObject private var playback: PlaybackController
     @State private var state: LoadState<[Station]> = .idle
     @State private var inProgressState: LoadState<[RecentEpisode]> = .idle
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
@@ -80,6 +81,21 @@ struct StationsView: View {
             await refreshRailsPeriodically()
         }
         .onAppear {
+            if didInitialLoad {
+                Task { await loadRails() }
+            }
+        }
+        // NavigationStack does not re-fire .onAppear on the root when the user
+        // pops back to it, so an episode completed inside a pushed view would
+        // otherwise wait up to railRefreshInterval to show up here. Refresh
+        // immediately whenever a completion lands or a new episode is started
+        // (the latter ticks once per episode, not on every 5s progress save).
+        .onChange(of: playback.completionTick) { _, _ in
+            if didInitialLoad {
+                Task { await loadRails() }
+            }
+        }
+        .onChange(of: playback.currentEpisodeTick) { _, _ in
             if didInitialLoad {
                 Task { await loadRails() }
             }
