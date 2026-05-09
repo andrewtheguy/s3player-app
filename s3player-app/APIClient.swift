@@ -71,6 +71,29 @@ struct APIClient {
         return try await get("api/shows/stations/\(encoded)/shows")
     }
 
+    func listFavorites() async throws -> FavoritesResponse {
+        try await get("api/shows/favorites")
+    }
+
+    func addFavorite(showId: Int) async throws {
+        let _: EmptyResponse = try await post(
+            "api/shows/\(showId)/favorite",
+            body: Optional<Empty>.none,
+            playerSessionToken: nil
+        )
+    }
+
+    func removeFavorite(showId: Int) async throws {
+        let _: EmptyResponse = try await delete("api/shows/\(showId)/favorite")
+    }
+
+    func listRecentShowEpisodes(showId: Int, limit: Int = 20) async throws -> RecentShowEpisodesResponse {
+        try await get(
+            "api/shows/\(showId)/recent-episodes",
+            queryItems: [URLQueryItem(name: "limit", value: String(limit))]
+        )
+    }
+
     func listMonths(showId: Int) async throws -> MonthsResponse {
         try await get("api/shows/\(showId)/months")
     }
