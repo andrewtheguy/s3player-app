@@ -222,6 +222,7 @@ struct StationsView: View {
             favoritesState = .loaded(try await favoritesResult.favorites)
         } catch APIError.unauthorized {
             auth.logout()
+            return
         } catch {
             favoritesState = .failed(errorMessage(error))
         }
@@ -266,6 +267,7 @@ struct StationsView: View {
             favoritesState = .loaded(try await favoritesResult.favorites)
         } catch APIError.unauthorized {
             auth.logout()
+            return
         } catch {
             if showLoading {
                 favoritesState = .failed(errorMessage(error))
