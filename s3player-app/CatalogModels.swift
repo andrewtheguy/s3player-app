@@ -20,10 +20,44 @@ struct Show: Decodable, Hashable, Identifiable {
     let id: Int
     let name: String
     let episode_count: Int
+    let is_favorite: Bool
 }
 
 struct ShowsResponse: Decodable {
     let shows: [Show]
+}
+
+struct FavoriteShow: Decodable, Hashable, Identifiable {
+    let id: Int
+    let station: String
+    let name: String
+    let episode_count: Int
+    // Backend returns a TIMESTAMPTZ string; CatalogDecoder only parses YYYY-MM-DD,
+    // so keep this raw to match the RecentEpisode.last_played_at convention.
+    let favorited_at: String
+    let latest_aired_on: Date?
+}
+
+struct FavoritesResponse: Decodable {
+    let favorites: [FavoriteShow]
+}
+
+struct ShowEpisode: Decodable, Hashable, Identifiable {
+    let id: Int
+    let aired_on: Date
+    let time_slot: String?
+    let show_id: Int
+    let show_name: String
+    let station: String
+    let position_ms: Int
+    let duration_ms: Int?
+    let completed: Bool
+    let last_played_at: String?
+}
+
+struct RecentShowEpisodesResponse: Decodable {
+    let show: ShowDetail
+    let episodes: [ShowEpisode]
 }
 
 struct ShowDetail: Codable, Hashable, Identifiable {

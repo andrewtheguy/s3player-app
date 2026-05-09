@@ -24,6 +24,7 @@ struct StationsView: View {
     @State private var state: LoadState<[Station]> = .idle
     @State private var inProgressState: LoadState<[RecentEpisode]> = .idle
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
+    @State private var favoritesState: LoadState<[FavoriteShow]> = .idle
     @State private var didInitialLoad = false
     // Episodes whose DELETE /progress request is still in flight. The rail
     // refreshers filter these out so an in-flight delete cannot flicker the
@@ -34,6 +35,15 @@ struct StationsView: View {
 
     var body: some View {
         List {
+            if case .loaded(let favorites) = favoritesState, !favorites.isEmpty {
+                Section("Favorites") {
+                    FavoritesRail(entries: favorites)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
             Section("Continue listening") {
                 railSectionContent(
                     state: inProgressState,
@@ -84,6 +94,9 @@ struct StationsView: View {
         }
         .navigationDestination(for: EpisodeRouteKey.self) { key in
             EpisodeDetailView(route: key, auth: auth)
+        }
+        .navigationDestination(for: ShowRecentEpisodesRouteKey.self) { key in
+            ShowRecentEpisodesView(showId: key.showId, fallbackName: key.fallbackName, auth: auth)
         }
     }
 
@@ -165,14 +178,17 @@ struct StationsView: View {
             state = .failed("Not signed in.")
             inProgressState = .failed("Not signed in.")
             recentState = .failed("Not signed in.")
+            favoritesState = .failed("Not signed in.")
             return
         }
         if case .loaded = state {} else { state = .loading }
         if case .loaded = inProgressState {} else { inProgressState = .loading }
         if case .loaded = recentState {} else { recentState = .loading }
+        if case .loaded = favoritesState {} else { favoritesState = .loading }
         async let stationsResult = client.listStations()
         async let inProgressResult = client.listInProgress()
         async let recentResult = client.listRecentCompleted()
+        async let favoritesResult = client.listFavorites()
 
         do {
             let stations = try await stationsResult
@@ -197,8 +213,18 @@ struct StationsView: View {
             recentState = .loaded(try await recentResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
+            return
         } catch {
             recentState = .failed(errorMessage(error))
+        }
+
+        do {
+            favoritesState = .loaded(try await favoritesResult.favorites)
+        } catch APIError.unauthorized {
+            auth.logout()
+            return
+        } catch {
+            favoritesState = .failed(errorMessage(error))
         }
     }
 
@@ -207,9 +233,11 @@ struct StationsView: View {
         if showLoading {
             inProgressState = .loading
             recentState = .loading
+            favoritesState = .loading
         }
         async let inProgressResult = client.listInProgress()
         async let recentResult = client.listRecentCompleted()
+        async let favoritesResult = client.listFavorites()
 
         do {
             inProgressState = .loaded(applyPendingDeletions(try await inProgressResult.episodes))
@@ -228,9 +256,21 @@ struct StationsView: View {
             recentState = .loaded(try await recentResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
+            return
         } catch {
             if showLoading {
                 recentState = .failed(errorMessage(error))
+            }
+        }
+
+        do {
+            favoritesState = .loaded(try await favoritesResult.favorites)
+        } catch APIError.unauthorized {
+            auth.logout()
+            return
+        } catch {
+            if showLoading {
+                favoritesState = .failed(errorMessage(error))
             }
         }
     }
@@ -319,6 +359,9 @@ struct ShowsView: View {
                         Text(show.name)
                             .font(.body)
                         Spacer()
+                        FavoriteStarButton(isFavorite: show.is_favorite) {
+                            toggleFavorite(show)
+                        }
                         CountBadge(count: show.episode_count)
                     }
                 }
@@ -341,6 +384,67 @@ struct ShowsView: View {
             state = .failed(errorMessage(error))
         }
     }
+
+    private func toggleFavorite(_ show: Show) {
+        guard case .loaded(let shows) = state else { return }
+        let wasFavorite = show.is_favorite
+        let updated = shows.map { existing -> Show in
+            guard existing.id == show.id else { return existing }
+            return Show(
+                id: existing.id,
+                name: existing.name,
+                episode_count: existing.episode_count,
+                is_favorite: !wasFavorite
+            )
+        }
+        state = .loaded(updated)
+
+        Task { [showId = show.id, wasFavorite] in
+            guard let client = APIClient(auth: auth) else { return }
+            do {
+                if wasFavorite {
+                    try await client.removeFavorite(showId: showId)
+                } else {
+                    try await client.addFavorite(showId: showId)
+                }
+            } catch APIError.unauthorized {
+                auth.logout()
+            } catch {
+                if case .loaded(let current) = state {
+                    let reverted = current.map { existing -> Show in
+                        guard existing.id == showId else { return existing }
+                        return Show(
+                            id: existing.id,
+                            name: existing.name,
+                            episode_count: existing.episode_count,
+                            is_favorite: wasFavorite
+                        )
+                    }
+                    state = .loaded(reverted)
+                }
+                print("Failed to toggle favorite for show \(showId): \(error)")
+            }
+        }
+    }
+}
+
+private struct FavoriteStarButton: View {
+    let isFavorite: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isFavorite ? "star.fill" : "star")
+                .font(.body)
+                .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        // .borderless lets the tap fall through to just the button (not the whole row),
+        // which keeps the surrounding NavigationLink working for a tap on the row body.
+        .buttonStyle(.borderless)
+        .accessibilityLabel(isFavorite ? "Unfavorite show" : "Favorite show")
+    }
 }
 
 struct MonthRouteKey: Hashable {
@@ -352,6 +456,11 @@ struct MonthRouteKey: Hashable {
 struct EpisodeRouteKey: Hashable {
     let episode: Episode
     let show: ShowDetail
+}
+
+struct ShowRecentEpisodesRouteKey: Hashable {
+    let showId: Int
+    let fallbackName: String
 }
 
 struct MonthsView: View {
@@ -815,6 +924,190 @@ private struct EpisodeDetailView: View {
             // Transient: keep existing savedProgress.
         }
     }
+}
+
+private struct FavoritesRail: View {
+    let entries: [FavoriteShow]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView(.horizontal, showsIndicators: true) {
+                LazyHStack(spacing: 12) {
+                    ForEach(entries) { entry in
+                        FavoriteCard(entry: entry)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+        }
+        .frame(height: 146)
+    }
+}
+
+private struct FavoriteCard: View {
+    let entry: FavoriteShow
+    @EnvironmentObject var navigation: NavigationCoordinator
+
+    var body: some View {
+        Button {
+            navigation.path.append(
+                ShowRecentEpisodesRouteKey(showId: entry.id, fallbackName: entry.name)
+            )
+        } label: {
+            content
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(entry.station.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(entry.name)
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Text("\(entry.episode_count) \(entry.episode_count == 1 ? "episode" : "episodes")")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            if let latest = entry.latest_aired_on {
+                Text("Latest: \(DateFormatter.sharedISODate.string(from: latest))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(width: 240, height: 130, alignment: .topLeading)
+        .background(railCardBackground, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct ShowRecentEpisodesView: View {
+    let showId: Int
+    let fallbackName: String
+    @ObservedObject var auth: AuthViewModel
+    @State private var state: LoadState<RecentShowEpisodesResponse> = .idle
+
+    var body: some View {
+        contentView
+            .navigationTitle(loadedShowName ?? fallbackName)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .task { await load() }
+            .refreshable { await load() }
+            .appToolbar(auth: auth)
+    }
+
+    private var loadedShowName: String? {
+        if case .loaded(let response) = state { return response.show.name }
+        return nil
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        switch state {
+        case .idle, .loading:
+            ProgressView().controlSize(.large)
+        case .failed(let message):
+            ErrorStateView(message: message) { Task { await load() } }
+        case .loaded(let response) where response.episodes.isEmpty:
+            EmptyStateView(message: "No episodes for this show yet.")
+        case .loaded(let response):
+            List(response.episodes) { episode in
+                NavigationLink(value: routeKey(for: episode, show: response.show)) {
+                    ShowEpisodeRow(episode: episode)
+                }
+            }
+        }
+    }
+
+    private func routeKey(for episode: ShowEpisode, show: ShowDetail) -> EpisodeRouteKey {
+        // ShowEpisode lacks s3_key/chapters; EpisodeDetailView refetches via
+        // getEpisodeDetail and shows the placeholder Episode only during the
+        // initial loading window. Same pattern as RecentEpisode.synthesizedEpisodeAndShow.
+        let synthesizedEpisode = Episode(
+            id: episode.id,
+            aired_on: episode.aired_on,
+            time_slot: episode.time_slot,
+            s3_key: "",
+            chapters: nil
+        )
+        return EpisodeRouteKey(episode: synthesizedEpisode, show: show)
+    }
+
+    private func load() async {
+        guard let client = APIClient(auth: auth) else {
+            state = .failed("Not signed in.")
+            return
+        }
+        if case .loaded = state {} else { state = .loading }
+        do {
+            let response = try await client.listRecentShowEpisodes(showId: showId)
+            state = .loaded(response)
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch {
+            state = .failed(errorMessage(error))
+        }
+    }
+}
+
+private struct ShowEpisodeRow: View {
+    let episode: ShowEpisode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(DateFormatter.sharedISODate.string(from: episode.aired_on))
+                    .font(.body)
+                let slot = formatTimeSlot(episode.time_slot)
+                if !slot.isEmpty {
+                    Text(slot)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            statusView
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        if let durationMs = episode.duration_ms,
+           !episode.completed,
+           episode.position_ms > 0,
+           durationMs > 0 {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(
+                    value: Double(min(episode.position_ms, durationMs)),
+                    total: Double(durationMs)
+                )
+                .progressViewStyle(.linear)
+                .frame(maxWidth: 180)
+                Text("\(formatMs(episode.position_ms)) / \(formatMs(durationMs))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        } else if episode.completed {
+            let relative = episode.last_played_at.flatMap(formatRelativeOrNil) ?? ""
+            Text(relative.isEmpty ? "Completed" : "Completed · \(relative)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private func formatRelativeOrNil(_ iso: String) -> String? {
+    let result = formatRelativeLastPlayed(iso)
+    return result.isEmpty ? nil : result
 }
 
 private struct RecentRail: View {
