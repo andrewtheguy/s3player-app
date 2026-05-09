@@ -517,8 +517,14 @@ final class PlaybackController: ObservableObject {
     }
 
     private func saveProgressIfActive() async {
+        // Skip on natural end: the isPlaying=false sink and the
+        // hasFinishedPlayback=true sink both fire from the AVPlayer end
+        // notification, scheduling this (completed=false) and saveCompletion
+        // (completed=true) as concurrent writes to the same row. Without this
+        // guard the two POSTs race and the server can keep the false one.
         guard sessionState == .active,
               !replayConfirmNeeded,
+              !player.hasFinishedPlayback,
               !player.playbackUnsupported else { return }
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
