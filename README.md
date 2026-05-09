@@ -17,16 +17,27 @@ Open `s3player-app.xcodeproj` and either:
 - **Simulator / Mac:** select the destination, press ▶.
 - **Physical iPad/iPhone:** plug the device in, select it as the destination, ▶. Personal-team dev installs expire after 7 days; re-run to refresh.
 
-Or via CLI:
+Or via CLI — boot a simulator, build, install, and launch:
 
 ```sh
+SIM="iPhone 17"
+xcrun simctl boot "$SIM" 2>/dev/null || true
+
 xcodebuild \
   -project s3player-app.xcodeproj \
   -scheme s3player-app \
-  -destination 'generic/platform=iOS Simulator' \
+  -destination "platform=iOS Simulator,name=$SIM" \
   -configuration Debug \
+  -derivedDataPath build/derived \
   build CODE_SIGNING_ALLOWED=NO
+
+APP=build/derived/Build/Products/Debug-iphonesimulator/s3player-app.app
+xcrun simctl install "$SIM" "$APP"
+xcrun simctl launch "$SIM" "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")"
+open -a Simulator
 ```
+
+To compile only (no install/launch), drop the last four lines and use `-destination 'generic/platform=iOS Simulator'`.
 
 ## Sign-in
 
