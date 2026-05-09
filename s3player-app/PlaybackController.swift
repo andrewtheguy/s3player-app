@@ -45,11 +45,22 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var isOffline: Bool = false
     @Published private(set) var cachedChapters: [Chapter] = []
     @Published var isExpanded: Bool = false
+    /// Bumped each time a completion lands durably on the server (either via
+    /// the natural-end save or a queued-flush retry). Views that show
+    /// "in-progress" or "recently completed" rails observe this so they refresh
+    /// immediately instead of waiting for their own polling timer.
+    @Published private(set) var completionTick: Int = 0
+    /// Bumped on the first successful progress save for a newly selected
+    /// episode. Lets the home rails surface the new entry at the top of
+    /// "Continue listening" right away, without firing on every routine
+    /// 5-second progress tick during long playback.
+    @Published private(set) var currentEpisodeTick: Int = 0
 
     private var cancellables = Set<AnyCancellable>()
     private var progressTask: Task<Void, Never>?
     private var inflightPlayTask: Task<Void, Never>?
     private var lastSavedPositionMs: Int = -1
+    private var lastTickedEpisodeId: Int?
     private var resumePositionMs: Int = 0
     private static let progressSaveInterval: UInt64 = 5_000_000_000
 
@@ -573,6 +584,11 @@ final class PlaybackController: ObservableObject {
             )
             lastSavedPositionMs = positionMs
             isOffline = false
+            if completed { completionTick &+= 1 }
+            if lastTickedEpisodeId != episode.id {
+                lastTickedEpisodeId = episode.id
+                currentEpisodeTick &+= 1
+            }
             await flushPendingProgress(client: client, playerToken: token)
             return true
         } catch APIError.sessionDisplaced {
@@ -630,6 +646,7 @@ final class PlaybackController: ObservableObject {
                     completed: entry.completed
                 )
                 store.remove(episodeId: entry.episodeId, recordedAtOrBefore: entry.recordedAt)
+                if entry.completed { completionTick &+= 1 }
             } catch {
                 // Stop flushing on the first failure; we'll retry on the next save.
                 return
@@ -689,6 +706,7 @@ final class PlaybackController: ObservableObject {
         isExpanded = false
         resumePositionMs = 0
         lastSavedPositionMs = -1
+        lastTickedEpisodeId = nil
         phase = .idle
         isOffline = false
     }
