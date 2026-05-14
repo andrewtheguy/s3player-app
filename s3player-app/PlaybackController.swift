@@ -62,6 +62,11 @@ final class PlaybackController: ObservableObject {
     private var lastSavedPositionMs: Int = -1
     private var lastTickedEpisodeId: Int?
     private var resumePositionMs: Int = 0
+    /// Set while a user-initiated mark-completed is in flight. Mirrors the web
+    /// frontend's `justMarkedCompletedRef`: gates `saveProgressIfActive` so the
+    /// pause we trigger after the manual completion can't race a completed=false
+    /// write against our completed=true write.
+    private var manualCompletionInFlight = false
     private static let progressSaveInterval: UInt64 = 5_000_000_000
 
     private let snapshotStore: PlaybackSnapshotStore?
@@ -257,6 +262,37 @@ final class PlaybackController: ObservableObject {
         player.setResumePosition(toSeconds: 0)
         if sessionState == .active, !player.isPlaying {
             player.togglePlayback()
+        }
+    }
+
+    func markCompleted() {
+        guard sessionState == .active,
+              currentEpisode != nil,
+              !replayConfirmNeeded,
+              !player.playbackUnsupported,
+              !manualCompletionInFlight else { return }
+        manualCompletionInFlight = true
+        if player.isPlaying {
+            player.togglePlayback()
+        }
+        Task { [weak self] in
+            await self?.performManualCompletion()
+        }
+    }
+
+    private func performManualCompletion() async {
+        defer { manualCompletionInFlight = false }
+        let positionMs = max(0, Int(player.elapsedTime * 1000))
+        let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+        let succeeded = await saveProgress(
+            positionMs: positionMs,
+            durationMs: durationMs,
+            completed: true
+        )
+        if succeeded || isOffline {
+            replayConfirmNeeded = true
+        } else if sessionState == .active {
+            loadError = "Couldn't mark this episode complete. Try again."
         }
     }
 
@@ -536,6 +572,7 @@ final class PlaybackController: ObservableObject {
         guard sessionState == .active,
               !replayConfirmNeeded,
               !player.hasFinishedPlayback,
+              !manualCompletionInFlight,
               !player.playbackUnsupported else { return }
         let positionMs = max(0, Int(player.elapsedTime * 1000))
         let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
