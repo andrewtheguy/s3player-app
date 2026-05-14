@@ -32,8 +32,14 @@ private struct AppToolbarModifier: ViewModifier {
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Sign Out") {
-                        confirmSignOut = true
+                    Menu {
+                        Button(role: .destructive) {
+                            confirmSignOut = true
+                        } label: {
+                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
+                    } label: {
+                        Label("More", systemImage: "ellipsis")
                     }
                 }
             }
