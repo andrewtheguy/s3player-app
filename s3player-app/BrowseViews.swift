@@ -254,7 +254,7 @@ struct StationsView: View {
         }
 
         do {
-            favoritesState = .loaded(sortFavorites(try await favoritesResult.favorites))
+            favoritesState = .loaded(try await favoritesResult.favorites)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -299,7 +299,7 @@ struct StationsView: View {
         }
 
         do {
-            favoritesState = .loaded(sortFavorites(try await favoritesResult.favorites))
+            favoritesState = .loaded(try await favoritesResult.favorites)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -315,17 +315,6 @@ struct StationsView: View {
             try? await Task.sleep(nanoseconds: Self.railRefreshInterval)
             if Task.isCancelled { return }
             await loadRails()
-        }
-    }
-
-    private func sortFavorites(_ entries: [FavoriteShow]) -> [FavoriteShow] {
-        entries.sorted { lhs, rhs in
-            switch (lhs.latest_aired_on, rhs.latest_aired_on) {
-            case let (l?, r?): return l > r
-            case (_?, nil): return true
-            case (nil, _?): return false
-            case (nil, nil): return lhs.name < rhs.name
-            }
         }
     }
 
