@@ -32,7 +32,7 @@ struct StationsView: View {
     // dismissed card back into view if the server hasn't yet committed the row
     // removal.
     @State private var pendingDeletions: Set<Int> = []
-    @State private var isManualRefreshing = false
+    @State private var isRefreshing = false
     private static let railRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
@@ -101,23 +101,27 @@ struct StationsView: View {
                 Task { await loadRails() }
             }
         }
-        .refreshable { await loadAll() }
+        .refreshable {
+            isRefreshing = true
+            await loadAll()
+            isRefreshing = false
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
                     Task {
-                        isManualRefreshing = true
+                        isRefreshing = true
                         await loadAll()
-                        isManualRefreshing = false
+                        isRefreshing = false
                     }
                 } label: {
-                    if isManualRefreshing {
+                    if isRefreshing {
                         ProgressView()
                     } else {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
-                .disabled(isManualRefreshing)
+                .disabled(isRefreshing)
             }
         }
         .appToolbar(auth: auth)
