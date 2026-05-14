@@ -409,6 +409,26 @@ struct NowPlayingSheet: View {
         }
     }
 
+    private var markCompletedButton: some View {
+        Button {
+            controller.markCompleted()
+        } label: {
+            Label("Mark as completed", systemImage: "checkmark.circle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .disabled(
+            !player.hasLoadedAudio
+            || player.isLoading
+            || controller.replayConfirmNeeded
+            || controller.sessionState != .active
+            || player.playbackUnsupported
+        )
+        .accessibilityLabel("Mark this episode as completed")
+    }
+
     private var progressView: some View {
         VStack(spacing: 10) {
             Slider(
@@ -497,9 +517,15 @@ struct NowPlayingSheet: View {
                     .foregroundStyle(.secondary)
                     .font(.subheadline)
             } else {
-                Label(player.statusMessage, systemImage: player.isLoading ? "hourglass" : "waveform")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
+                HStack(spacing: 12) {
+                    Label(player.statusMessage, systemImage: player.isLoading ? "hourglass" : "waveform")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                    Spacer(minLength: 12)
+                    if !controller.replayConfirmNeeded, !player.playbackUnsupported {
+                        markCompletedButton
+                    }
+                }
             }
         }
     }
