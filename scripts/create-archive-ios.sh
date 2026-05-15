@@ -14,7 +14,7 @@ Builds an iOS .xcarchive and exports it to a signed .ipa in one step.
 
 Options:
   -t, --team-id TEAM_ID       Developer Team ID.
-                              Defaults to the project DEVELOPMENT_TEAM when unique.
+                              Defaults to DEVELOPMENT_TEAM from Developer.xcconfig.
   -a, --archive-path PATH     Output path for the iOS .xcarchive.
                               Defaults to ./build/${APP_NAME}-ios.xcarchive.
   -c, --configuration NAME    Build configuration. Defaults to Release.
@@ -94,29 +94,23 @@ while [[ $# -gt 0 ]]; do
 done
 
 detect_project_team_id() {
-  local project_file="$PROJECT_ROOT/${APP_NAME}.xcodeproj/project.pbxproj"
-  [[ -f "$project_file" ]] || return 1
+  local xcconfig="$PROJECT_ROOT/Developer.xcconfig"
+  [[ -f "$xcconfig" ]] || return 1
 
   /usr/bin/awk '
-    /DEVELOPMENT_TEAM = / {
-      value = $0
-      sub(/.*DEVELOPMENT_TEAM = /, "", value)
-      sub(/;.*/, "", value)
-      gsub(/[ \t"]/, "", value)
-      if (value != "" && !seen[value]++) {
-        ids[++count] = value
+    /^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=/ {
+      sub(/\/\/.*$/, "")
+      sub(/.*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*/, "")
+      gsub(/[[:space:]"]+$/, "")
+      gsub(/^[[:space:]"]+/, "")
+      if ($0 != "") {
+        print $0
+        found = 1
+        exit 0
       }
     }
-    END {
-      if (count == 1) {
-        print ids[1]
-      } else if (count > 1) {
-        exit 2
-      } else {
-        exit 1
-      }
-    }
-  ' "$project_file"
+    END { if (!found) exit 1 }
+  ' "$xcconfig"
 }
 
 if [[ -z "$TEAM_ID" ]]; then
@@ -125,7 +119,7 @@ fi
 
 [[ -n "$TEAM_ID" ]] || {
   usage >&2
-  die "team ID is required because no unique DEVELOPMENT_TEAM was found in the project"
+  die "team ID is required: set DEVELOPMENT_TEAM in Developer.xcconfig (copy Developer.xcconfig.sample) or pass --team-id"
 }
 
 [[ "$ARCHIVE_PATH" == *.xcarchive ]] || die "--archive-path must end in .xcarchive"
