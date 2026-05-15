@@ -10,6 +10,23 @@ The native app mirrors the web frontend's UX (Stations → Shows → Year/Month 
 - A reachable s3player backend (e.g. `https://s3player.local.168234.xyz` or a local `http://localhost:47653`).
 - The site password configured on that backend.
 
+## Setup
+
+The project reads `DEVELOPMENT_TEAM` from `Developer.xcconfig`, which is gitignored so each developer can use their own Apple Developer Team ID. After cloning:
+
+```sh
+cp Developer.xcconfig.sample Developer.xcconfig
+# edit Developer.xcconfig and set DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
+```
+
+Find your Team ID in **Xcode → Settings → Accounts → (your account) → manage Certificates / team list**, or on [developer.apple.com](https://developer.apple.com/account) under Membership Details. If you already have an Apple-issued signing cert in your keychain, this also prints the team ID and name:
+
+```sh
+security find-certificate -a -c "Apple Development" -p \
+  | while openssl x509 -noout -subject 2>/dev/null; do :; done
+# subject= ... OU=<TEAM_ID>, O=<TEAM_NAME>, ...
+```
+
 ## Running
 
 Open `s3player-app.xcodeproj` and either:
@@ -118,7 +135,7 @@ Create an iOS device archive and export a development `.ipa` in one step:
 scripts/create-archive-ios.sh
 ```
 
-The script writes an iOS-only archive to `./build/s3player-app-ios.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`, then generates a temporary `ExportOptions.plist` with `method = debugging`, the project `DEVELOPMENT_TEAM`, and automatic signing, and exports into `./build/export`.
+The script writes an iOS-only archive to `./build/s3player-app-ios.xcarchive` using `-destination 'generic/platform=iOS'` and `-sdk iphoneos`, then generates a temporary `ExportOptions.plist` with `method = debugging`, the `DEVELOPMENT_TEAM` from `Developer.xcconfig`, and automatic signing, and exports into `./build/export`.
 
 Use flags when you need an explicit team ID, explicit paths, or another export method:
 
