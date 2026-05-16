@@ -658,6 +658,8 @@ private struct EpisodeDetailView: View {
     @State private var savedProgress: ProgressResponse?
     @State private var summariesState: LoadState<[ChapterSummary]> = .idle
     @State private var expandedSummaries: Set<Int> = []
+    @State private var markCompletedInFlight = false
+    @State private var markCompletedError: String?
     private static let progressRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
@@ -737,8 +739,66 @@ private struct EpisodeDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                if showMarkCompletedButton {
+                    markCompletedButton
+                }
+
+                if let markCompletedError {
+                    Label(markCompletedError, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    private var showMarkCompletedButton: Bool {
+        playback.sessionState == .active && savedProgress?.completed != true
+    }
+
+    private var markCompletedButton: some View {
+        Button {
+            Task { await markCompleted() }
+        } label: {
+            HStack(spacing: 8) {
+                if markCompletedInFlight {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "checkmark.circle")
+                }
+                Text("Mark as completed")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .disabled(markCompletedInFlight)
+        .accessibilityLabel("Mark this episode as completed")
+    }
+
+    private func markCompleted() async {
+        guard !markCompletedInFlight else { return }
+        markCompletedInFlight = true
+        markCompletedError = nil
+        let episodeId = displayedEpisode.id
+        let positionMs = savedProgress?.position_ms ?? 0
+        let durationMs = savedProgress?.duration_ms
+        let succeeded = await playback.markEpisodeCompleted(
+            episodeId: episodeId,
+            positionMs: positionMs,
+            durationMs: durationMs
+        )
+        markCompletedInFlight = false
+        if succeeded {
+            await refreshProgress()
+        } else {
+            markCompletedError = "Couldn't mark this episode complete. Try again."
         }
     }
 

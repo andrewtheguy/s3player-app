@@ -296,6 +296,51 @@ final class PlaybackController: ObservableObject {
         }
     }
 
+    /// Mark an arbitrary episode complete from outside the now-playing UI.
+    /// If the episode matches the active session, routes through the same
+    /// in-session path as [[markCompleted]] so the player pauses and the
+    /// replay-confirm flow engages. Otherwise issues a one-shot progress
+    /// write and bumps [[completionTick]] so the rails refresh.
+    @discardableResult
+    func markEpisodeCompleted(
+        episodeId: Int,
+        positionMs: Int,
+        durationMs: Int?
+    ) async -> Bool {
+        if currentEpisode?.id == episodeId,
+           sessionState == .active,
+           !replayConfirmNeeded,
+           !player.playbackUnsupported,
+           !manualCompletionInFlight {
+            manualCompletionInFlight = true
+            if player.isPlaying { player.togglePlayback() }
+            await performManualCompletion()
+            return replayConfirmNeeded
+        }
+
+        guard let client = APIClient(auth: auth),
+              let token = auth.playerSessionToken else { return false }
+        do {
+            try await client.saveProgress(
+                episodeId: episodeId,
+                playerToken: token,
+                positionMs: positionMs,
+                durationMs: durationMs,
+                completed: true
+            )
+            completionTick &+= 1
+            return true
+        } catch APIError.sessionDisplaced {
+            handleDisplacement()
+            return false
+        } catch APIError.unauthorized {
+            auth.logout()
+            return false
+        } catch {
+            return false
+        }
+    }
+
     func expand() {
         isExpanded = true
     }
