@@ -74,9 +74,7 @@ struct ContentView: View {
             NavigationStack(path: $navigation.path) {
                 StationsView(auth: auth)
             }
-            if playback.currentEpisode != nil, let show = playback.currentShow {
-                MiniNowPlayingBar(controller: playback, show: show)
-            }
+            MiniNowPlayingBar(controller: playback)
         }
         .environmentObject(playback)
         .environmentObject(navigation)
