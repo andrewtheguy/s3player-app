@@ -20,11 +20,9 @@ struct StationsView: View {
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
     @State private var favoritesState: LoadState<[FavoriteShow]> = .idle
     @State private var didInitialLoad = false
-    // Episodes whose DELETE /progress request is still in flight. The rail
-    // refreshers filter these out so an in-flight delete cannot flicker the
-    // dismissed card back into view if the server hasn't yet committed the row
-    // removal.
-    @State private var pendingDeletions: Set<Int> = []
+    @State private var pendingDismissEpisode: RecentEpisode?
+    @State private var noSessionDismissShown = false
+    @State private var dismissErrorMessage: String?
     @State private var isRefreshing = false
     private static let railRefreshInterval: UInt64 = 15_000_000_000
 
@@ -118,6 +116,45 @@ struct StationsView: View {
             }
         }
         .appToolbar(auth: auth)
+        .confirmationDialog(
+            "Remove from Continue listening?",
+            isPresented: Binding(
+                get: { pendingDismissEpisode != nil },
+                set: { if !$0 { pendingDismissEpisode = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDismissEpisode
+        ) { episode in
+            Button("Mark as Completed") {
+                markInProgressCompleted(episode)
+            }
+            Button("Delete Progress", role: .destructive) {
+                removeInProgress(episode)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { episode in
+            Text(episode.show_name)
+        }
+        .alert(
+            "No active player session",
+            isPresented: $noSessionDismissShown
+        ) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Only the currently-active player can change playback state. Open this episode and take over playback to claim the session, then try again.")
+        }
+        .alert(
+            "Couldn't update Continue listening",
+            isPresented: Binding(
+                get: { dismissErrorMessage != nil },
+                set: { if !$0 { dismissErrorMessage = nil } }
+            ),
+            presenting: dismissErrorMessage
+        ) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { message in
+            Text(message)
+        }
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
         }
@@ -200,7 +237,13 @@ struct StationsView: View {
             RecentRail(
                 entries: entries,
                 kind: kind,
-                onRemove: kind == .inProgress ? { episode in removeInProgress(episode) } : nil
+                onRemove: kind == .inProgress ? { episode in
+                    if auth.playerSessionToken != nil {
+                        pendingDismissEpisode = episode
+                    } else {
+                        noSessionDismissShown = true
+                    }
+                } : nil
             )
         }
     }
@@ -233,7 +276,7 @@ struct StationsView: View {
         }
 
         do {
-            inProgressState = .loaded(applyPendingDeletions(try await inProgressResult.episodes))
+            inProgressState = .loaded(try await inProgressResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -272,7 +315,7 @@ struct StationsView: View {
         async let favoritesResult = client.listFavorites()
 
         do {
-            inProgressState = .loaded(applyPendingDeletions(try await inProgressResult.episodes))
+            inProgressState = .loaded(try await inProgressResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -315,37 +358,45 @@ struct StationsView: View {
         }
     }
 
-    private func applyPendingDeletions(_ entries: [RecentEpisode]) -> [RecentEpisode] {
-        guard !pendingDeletions.isEmpty else { return entries }
-        return entries.filter { !pendingDeletions.contains($0.id) }
+    private func markInProgressCompleted(_ episode: RecentEpisode) {
+        guard case .loaded(let episodes) = inProgressState else { return }
+        guard episodes.contains(where: { $0.id == episode.id }) else { return }
+
+        Task { [episode] in
+            let succeeded = await playback.markEpisodeCompleted(
+                episodeId: episode.id,
+                positionMs: episode.position_ms,
+                durationMs: episode.duration_ms
+            )
+            guard succeeded else {
+                dismissErrorMessage = "Failed to mark as completed. Please try again."
+                return
+            }
+            if case .loaded(let current) = inProgressState {
+                inProgressState = .loaded(current.filter { $0.id != episode.id })
+            }
+        }
     }
 
     private func removeInProgress(_ episode: RecentEpisode) {
         guard case .loaded(let episodes) = inProgressState else { return }
         guard episodes.contains(where: { $0.id == episode.id }) else { return }
+        guard let playerToken = auth.playerSessionToken else {
+            noSessionDismissShown = true
+            return
+        }
 
-        pendingDeletions.insert(episode.id)
-        inProgressState = .loaded(episodes.filter { $0.id != episode.id })
-
-        Task { [episode] in
-            guard let client = APIClient(auth: auth) else {
-                pendingDeletions.remove(episode.id)
-                return
-            }
+        Task { [episode, playerToken] in
+            guard let client = APIClient(auth: auth) else { return }
             do {
-                try await client.deleteProgress(episodeId: episode.id)
-                pendingDeletions.remove(episode.id)
+                try await client.deleteProgress(episodeId: episode.id, playerToken: playerToken)
+                if case .loaded(let current) = inProgressState {
+                    inProgressState = .loaded(current.filter { $0.id != episode.id })
+                }
             } catch APIError.unauthorized {
-                pendingDeletions.remove(episode.id)
                 auth.logout()
             } catch {
-                pendingDeletions.remove(episode.id)
-                if case .loaded(let current) = inProgressState {
-                    let restored = (current + [episode])
-                        .sorted { lastPlayedDate(for: $0) > lastPlayedDate(for: $1) }
-                    inProgressState = .loaded(restored)
-                }
-                print("Failed to remove from Continue listening: \(error)")
+                dismissErrorMessage = "Failed to remove from Continue listening. \(errorMessage(error))"
             }
         }
     }
@@ -539,7 +590,8 @@ private struct RecentCard: View {
         }
         .buttonStyle(.plain)
         .padding(6)
-        .accessibilityLabel("Remove \(entry.show_name) from Continue listening")
+        .accessibilityLabel("Dismiss \(entry.show_name) from Continue listening")
+        .accessibilityHint("Shows options to mark as completed or delete progress")
     }
 
     private var isNowPlaying: Bool {
