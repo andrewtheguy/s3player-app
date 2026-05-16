@@ -80,6 +80,11 @@ let outDir = CommandLine.arguments.count > 1
     ? absoluteURL(for: CommandLine.arguments[1]).standardizedFileURL
     : defaultOutputDirectory()
 
+let repoRoot = absoluteURL(for: CommandLine.arguments[0])
+    .standardizedFileURL
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+
 func makeContext(size: Int) -> CGContext {
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     return CGContext(
@@ -202,6 +207,54 @@ func renderTinted() {
     savePNG(context, to: outDir.appendingPathComponent("icon-tinted.png"))
 }
 
+func renderLightSVG(to url: URL) throws {
+    let s = Double(defaultCanvasSize)
+
+    let triCenterX = s / 2 + s * 0.04
+    let triCenterY = s / 2
+    let triHeight = s * 0.40
+    let triWidth = triHeight * (sqrt(3.0) / 2) * 1.05
+    let triStrokeWidth = s * 0.10
+    let p1x = triCenterX + triWidth / 2
+    let p1y = triCenterY
+    let p2x = triCenterX - triWidth / 2
+    let p2yTop = triCenterY - triHeight / 2
+    let p3yBottom = triCenterY + triHeight / 2
+
+    let waveCenterX = s * 0.38
+    let waveCenterY = s / 2
+    let baseRadius = s * 0.32
+    let waveStrokeWidth = s * 0.018
+
+    var waveElements = ""
+    for index in 0..<3 {
+        let radius = baseRadius + Double(index) * s * 0.055
+        let alpha = 0.35 - Double(index) * 0.10
+        let offset = radius / sqrt(2.0)
+        let startX = waveCenterX + offset
+        let startY = waveCenterY + offset
+        let endY = waveCenterY - offset
+        waveElements += "\n  <path d=\"M \(startX) \(startY) A \(radius) \(radius) 0 0 0 \(startX) \(endY)\" fill=\"none\" stroke=\"white\" stroke-opacity=\"\(alpha)\" stroke-width=\"\(waveStrokeWidth)\" stroke-linecap=\"round\"/>"
+    }
+
+    let svg = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <svg xmlns="http://www.w3.org/2000/svg" width="\(defaultCanvasSize)" height="\(defaultCanvasSize)" viewBox="0 0 \(defaultCanvasSize) \(defaultCanvasSize)">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0" stop-color="rgb(100%,55%,20%)"/>
+          <stop offset="1" stop-color="rgb(90%,18%,30%)"/>
+        </linearGradient>
+      </defs>
+      <rect width="\(defaultCanvasSize)" height="\(defaultCanvasSize)" fill="url(#bg)"/>\(waveElements)
+      <path d="M \(p1x) \(p1y) L \(p2x) \(p2yTop) L \(p2x) \(p3yBottom) Z" fill="white" stroke="white" stroke-width="\(triStrokeWidth)" stroke-linejoin="round"/>
+    </svg>
+
+    """
+
+    try svg.data(using: .utf8)!.write(to: url, options: .atomic)
+}
+
 func writeContentsJSON() throws {
     let contents = Contents(
         images: [
@@ -238,6 +291,7 @@ try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories:
 renderLight(filename: "icon-light.png", size: defaultCanvasSize)
 renderDark()
 renderTinted()
+try renderLightSVG(to: repoRoot.appendingPathComponent("icon.svg"))
 
 for icon in macIcons {
     renderLight(filename: icon.filename, size: icon.pixels)
