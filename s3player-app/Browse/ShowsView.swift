@@ -78,12 +78,7 @@ struct ShowsView: View {
         let wasFavorite = show.is_favorite
         let updated = shows.map { existing -> Show in
             guard existing.id == show.id else { return existing }
-            return Show(
-                id: existing.id,
-                name: existing.name,
-                episode_count: existing.episode_count,
-                is_favorite: !wasFavorite
-            )
+            return existing.updated(favorite: !wasFavorite)
         }
         state = .loaded(updated)
 
@@ -101,18 +96,24 @@ struct ShowsView: View {
                 if case .loaded(let current) = state {
                     let reverted = current.map { existing -> Show in
                         guard existing.id == showId else { return existing }
-                        return Show(
-                            id: existing.id,
-                            name: existing.name,
-                            episode_count: existing.episode_count,
-                            is_favorite: wasFavorite
-                        )
+                        return existing.updated(favorite: wasFavorite)
                     }
                     state = .loaded(reverted)
                 }
                 print("Failed to toggle favorite for show \(showId): \(error)")
             }
         }
+    }
+}
+
+private extension Show {
+    func updated(favorite: Bool) -> Show {
+        Show(
+            id: id,
+            name: name,
+            episode_count: episode_count,
+            is_favorite: favorite
+        )
     }
 }
 
