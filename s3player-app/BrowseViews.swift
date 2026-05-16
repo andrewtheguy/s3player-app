@@ -1091,6 +1091,7 @@ struct ShowRecentEpisodesView: View {
     let showId: Int
     let fallbackName: String
     @ObservedObject var auth: AuthViewModel
+    @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<RecentShowEpisodesResponse> = .idle
 
     var body: some View {
@@ -1101,6 +1102,13 @@ struct ShowRecentEpisodesView: View {
             #endif
             .task { await load() }
             .refreshable { await load() }
+            // Episode rows show position / completed status from the catalog
+            // response. When a completion lands (either via the now-playing
+            // sheet, the detail-view button, or a queued flush) the rail
+            // refreshes immediately instead of waiting for a manual reload.
+            .onChange(of: playback.completionTick) { _, _ in
+                Task { await load() }
+            }
             .appToolbar(auth: auth)
     }
 
