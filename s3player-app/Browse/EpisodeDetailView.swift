@@ -129,7 +129,6 @@ struct EpisodeDetailView: View {
                 Text("Mark as completed")
             }
             .font(.footnote)
-            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 4)
         }
