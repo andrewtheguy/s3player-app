@@ -22,6 +22,7 @@ struct StationsView: View {
     @State private var didInitialLoad = false
     @State private var pendingDismissEpisode: RecentEpisode?
     @State private var noSessionDismissShown = false
+    @State private var dismissErrorMessage: String?
     @State private var isRefreshing = false
     private static let railRefreshInterval: UInt64 = 15_000_000_000
 
@@ -141,6 +142,18 @@ struct StationsView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text("Only the currently-active player can change playback state. Open this episode and take over playback to claim the session, then try again.")
+        }
+        .alert(
+            "Couldn't update Continue listening",
+            isPresented: Binding(
+                get: { dismissErrorMessage != nil },
+                set: { if !$0 { dismissErrorMessage = nil } }
+            ),
+            presenting: dismissErrorMessage
+        ) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { message in
+            Text(message)
         }
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
@@ -356,7 +369,7 @@ struct StationsView: View {
                 durationMs: episode.duration_ms
             )
             guard succeeded else {
-                print("Failed to mark as completed from Continue listening")
+                dismissErrorMessage = "Failed to mark as completed. Please try again."
                 return
             }
             if case .loaded(let current) = inProgressState {
@@ -383,7 +396,7 @@ struct StationsView: View {
             } catch APIError.unauthorized {
                 auth.logout()
             } catch {
-                print("Failed to remove from Continue listening: \(error)")
+                dismissErrorMessage = "Failed to remove from Continue listening. \(errorMessage(error))"
             }
         }
     }
