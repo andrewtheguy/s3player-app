@@ -658,6 +658,8 @@ private struct EpisodeDetailView: View {
     @State private var savedProgress: ProgressResponse?
     @State private var summariesState: LoadState<[ChapterSummary]> = .idle
     @State private var expandedSummaries: Set<Int> = []
+    @State private var markCompletedInFlight = false
+    @State private var markCompletedError: String?
     private static let progressRefreshInterval: UInt64 = 15_000_000_000
 
     var body: some View {
@@ -737,8 +739,66 @@ private struct EpisodeDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                if showMarkCompletedButton {
+                    markCompletedButton
+                }
+
+                if let markCompletedError {
+                    Label(markCompletedError, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    private var showMarkCompletedButton: Bool {
+        playback.sessionState == .active && savedProgress?.completed != true
+    }
+
+    private var markCompletedButton: some View {
+        Button {
+            Task { await markCompleted() }
+        } label: {
+            HStack(spacing: 8) {
+                if markCompletedInFlight {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "checkmark.circle")
+                }
+                Text("Mark as completed")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .disabled(markCompletedInFlight)
+        .accessibilityLabel("Mark this episode as completed")
+    }
+
+    private func markCompleted() async {
+        guard !markCompletedInFlight else { return }
+        markCompletedInFlight = true
+        markCompletedError = nil
+        let episodeId = displayedEpisode.id
+        let positionMs = savedProgress?.position_ms ?? 0
+        let durationMs = savedProgress?.duration_ms
+        let succeeded = await playback.markEpisodeCompleted(
+            episodeId: episodeId,
+            positionMs: positionMs,
+            durationMs: durationMs
+        )
+        markCompletedInFlight = false
+        if succeeded {
+            await refreshProgress()
+        } else {
+            markCompletedError = "Couldn't mark this episode complete. Try again."
         }
     }
 
@@ -1031,7 +1091,9 @@ struct ShowRecentEpisodesView: View {
     let showId: Int
     let fallbackName: String
     @ObservedObject var auth: AuthViewModel
+    @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<RecentShowEpisodesResponse> = .idle
+    @State private var didInitialLoad = false
 
     var body: some View {
         contentView
@@ -1039,8 +1101,21 @@ struct ShowRecentEpisodesView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .task { await load() }
+            .task {
+                await load()
+                didInitialLoad = true
+            }
             .refreshable { await load() }
+            // Episode rows show position / completed status from the catalog
+            // response. When a completion lands (either via the now-playing
+            // sheet, the detail-view button, or a queued flush) the rail
+            // refreshes immediately instead of waiting for a manual reload.
+            // Gated on didInitialLoad so a completionTick bump mid-navigation
+            // can't race the .task's initial load.
+            .onChange(of: playback.completionTick) { _, _ in
+                guard didInitialLoad else { return }
+                Task { await load() }
+            }
             .appToolbar(auth: auth)
     }
 

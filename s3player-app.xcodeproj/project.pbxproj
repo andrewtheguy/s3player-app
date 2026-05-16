@@ -273,7 +273,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "andrewtheguy.s3player.s3player-app";
+				PRODUCT_BUNDLE_IDENTIFIER = "andrewtheguy.s3player.s3player-app.debug";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTS_MACCATALYST = NO;
