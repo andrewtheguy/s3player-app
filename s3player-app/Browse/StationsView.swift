@@ -20,11 +20,6 @@ struct StationsView: View {
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
     @State private var favoritesState: LoadState<[FavoriteShow]> = .idle
     @State private var didInitialLoad = false
-    // Episodes whose DELETE /progress request is still in flight. The rail
-    // refreshers filter these out so an in-flight delete cannot flicker the
-    // dismissed card back into view if the server hasn't yet committed the row
-    // removal.
-    @State private var pendingDeletions: Set<Int> = []
     @State private var pendingDismissEpisode: RecentEpisode?
     @State private var noSessionDismissShown = false
     @State private var isRefreshing = false
@@ -268,7 +263,7 @@ struct StationsView: View {
         }
 
         do {
-            inProgressState = .loaded(applyPendingDeletions(try await inProgressResult.episodes))
+            inProgressState = .loaded(try await inProgressResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -307,7 +302,7 @@ struct StationsView: View {
         async let favoritesResult = client.listFavorites()
 
         do {
-            inProgressState = .loaded(applyPendingDeletions(try await inProgressResult.episodes))
+            inProgressState = .loaded(try await inProgressResult.episodes)
         } catch APIError.unauthorized {
             auth.logout()
             return
@@ -350,17 +345,9 @@ struct StationsView: View {
         }
     }
 
-    private func applyPendingDeletions(_ entries: [RecentEpisode]) -> [RecentEpisode] {
-        guard !pendingDeletions.isEmpty else { return entries }
-        return entries.filter { !pendingDeletions.contains($0.id) }
-    }
-
     private func markInProgressCompleted(_ episode: RecentEpisode) {
         guard case .loaded(let episodes) = inProgressState else { return }
         guard episodes.contains(where: { $0.id == episode.id }) else { return }
-
-        pendingDeletions.insert(episode.id)
-        inProgressState = .loaded(episodes.filter { $0.id != episode.id })
 
         Task { [episode] in
             let succeeded = await playback.markEpisodeCompleted(
@@ -368,14 +355,12 @@ struct StationsView: View {
                 positionMs: episode.position_ms,
                 durationMs: episode.duration_ms
             )
-            pendingDeletions.remove(episode.id)
-            if !succeeded {
-                if case .loaded(let current) = inProgressState {
-                    let restored = (current + [episode])
-                        .sorted { lastPlayedDate(for: $0) > lastPlayedDate(for: $1) }
-                    inProgressState = .loaded(restored)
-                }
+            guard succeeded else {
                 print("Failed to mark as completed from Continue listening")
+                return
+            }
+            if case .loaded(let current) = inProgressState {
+                inProgressState = .loaded(current.filter { $0.id != episode.id })
             }
         }
     }
@@ -388,27 +373,16 @@ struct StationsView: View {
             return
         }
 
-        pendingDeletions.insert(episode.id)
-        inProgressState = .loaded(episodes.filter { $0.id != episode.id })
-
         Task { [episode, playerToken] in
-            guard let client = APIClient(auth: auth) else {
-                pendingDeletions.remove(episode.id)
-                return
-            }
+            guard let client = APIClient(auth: auth) else { return }
             do {
                 try await client.deleteProgress(episodeId: episode.id, playerToken: playerToken)
-                pendingDeletions.remove(episode.id)
+                if case .loaded(let current) = inProgressState {
+                    inProgressState = .loaded(current.filter { $0.id != episode.id })
+                }
             } catch APIError.unauthorized {
-                pendingDeletions.remove(episode.id)
                 auth.logout()
             } catch {
-                pendingDeletions.remove(episode.id)
-                if case .loaded(let current) = inProgressState {
-                    let restored = (current + [episode])
-                        .sorted { lastPlayedDate(for: $0) > lastPlayedDate(for: $1) }
-                    inProgressState = .loaded(restored)
-                }
                 print("Failed to remove from Continue listening: \(error)")
             }
         }
