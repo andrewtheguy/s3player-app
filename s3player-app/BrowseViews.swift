@@ -1093,6 +1093,7 @@ struct ShowRecentEpisodesView: View {
     @ObservedObject var auth: AuthViewModel
     @EnvironmentObject var playback: PlaybackController
     @State private var state: LoadState<RecentShowEpisodesResponse> = .idle
+    @State private var didInitialLoad = false
 
     var body: some View {
         contentView
@@ -1100,13 +1101,19 @@ struct ShowRecentEpisodesView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .task { await load() }
+            .task {
+                await load()
+                didInitialLoad = true
+            }
             .refreshable { await load() }
             // Episode rows show position / completed status from the catalog
             // response. When a completion lands (either via the now-playing
             // sheet, the detail-view button, or a queued flush) the rail
             // refreshes immediately instead of waiting for a manual reload.
+            // Gated on didInitialLoad so a completionTick bump mid-navigation
+            // can't race the .task's initial load.
             .onChange(of: playback.completionTick) { _, _ in
+                guard didInitialLoad else { return }
                 Task { await load() }
             }
             .appToolbar(auth: auth)
