@@ -353,6 +353,10 @@ final class PlaybackController: ObservableObject {
         Task { await self.takeOver() }
     }
 
+    func requestClaimSession() {
+        Task { await self.claimSessionOnly() }
+    }
+
     // MARK: - Episode swap
 
     private func beginPlay(episode: Episode, show: ShowDetail) async {
@@ -507,6 +511,30 @@ final class PlaybackController: ObservableObject {
 
     private func takeOver() async {
         await claimSessionAndPlay(fallbackState: .displaced)
+    }
+
+    private func claimSessionOnly() async {
+        guard let client = APIClient(auth: auth) else { return }
+        let fallbackState: SessionState = sessionState == .displaced ? .displaced : .inactive
+        sessionState = .activating
+        loadError = nil
+        do {
+            let claim = try await client.claimSession()
+            auth.setPlayerSessionToken(claim.session_token)
+            sessionState = .active
+            isOffline = false
+            if currentEpisode != nil {
+                await syncResumePositionFromServer(client: client)
+            }
+        } catch APIError.unauthorized {
+            auth.logout()
+        } catch APIError.transport(let urlError) {
+            sessionState = fallbackState
+            loadError = urlError.localizedDescription
+        } catch {
+            sessionState = fallbackState
+            loadError = errorMessage(error)
+        }
     }
 
     private func claimSessionAndPlay(fallbackState: SessionState) async {

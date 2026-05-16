@@ -10,45 +10,20 @@ import SwiftUI
 struct MiniNowPlayingBar: View {
     @ObservedObject var controller: PlaybackController
     @ObservedObject var player: AudioPlayerViewModel
-    let show: ShowDetail
 
-    init(controller: PlaybackController, show: ShowDetail) {
+    init(controller: PlaybackController) {
         self.controller = controller
         self.player = controller.player
-        self.show = show
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            progressBar
+            if controller.currentEpisode != nil {
+                progressBar
+            }
             HStack(spacing: 12) {
-                Button {
-                    controller.expand()
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 4) {
-                            Text("Now Playing")
-                                .font(.caption.weight(.semibold))
-                            Image(systemName: "chevron.up")
-                                .font(.caption2.weight(.bold))
-                        }
-                        .foregroundStyle(.secondary)
-
-                        Text(show.name)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        Text(progressText)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open now playing")
-                .accessibilityHint("Expands the full player")
+                metadataBlock
 
                 sessionStatusBadge
                 actionButton
@@ -57,6 +32,62 @@ struct MiniNowPlayingBar: View {
             .padding(.vertical, 10)
         }
         .background(.background, ignoresSafeAreaEdges: .bottom)
+    }
+
+    @ViewBuilder
+    private var metadataBlock: some View {
+        if let show = controller.currentShow {
+            Button {
+                controller.expand()
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("Now Playing")
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.up")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .foregroundStyle(.secondary)
+
+                    Text(show.name)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(progressText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open now playing")
+            .accessibilityHint("Expands the full player")
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Session")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("No episode loaded")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(emptyStateHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var emptyStateHint: String {
+        switch controller.sessionState {
+        case .inactive: return "Take over to start listening on this device"
+        case .displaced: return "Another device is playing — take over to listen here"
+        case .activating: return "Connecting…"
+        case .active: return "Pick an episode to start"
+        }
     }
 
     private var progressBar: some View {
@@ -159,25 +190,21 @@ struct MiniNowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(player.isLoading || (!player.hasLoadedAudio && controller.currentEpisode == nil))
-            case .inactive:
+            case .inactive, .displaced:
                 Button {
-                    controller.requestActivate()
+                    controller.requestClaimSession()
                 } label: {
-                    Image(systemName: "play.circle.fill")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.right")
+                            .font(.caption.weight(.bold))
+                        Text("Take Over")
+                            .font(.caption.weight(.semibold))
+                    }
                 }
-                .buttonStyle(.plain)
-            case .displaced:
-                Button {
-                    controller.requestTakeOver()
-                } label: {
-                    Image(systemName: "arrow.uturn.right.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.orange)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderedProminent)
+                .tint(controller.sessionState == .displaced ? .orange : .accentColor)
+                .controlSize(.small)
+                .accessibilityLabel("Take over playback session")
             case .activating:
                 ProgressView()
                     .frame(width: 44, height: 44)

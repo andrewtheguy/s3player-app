@@ -97,7 +97,7 @@ struct EpisodeDetailView: View {
                     }
                 }
 
-                if showMarkCompletedButton {
+                if savedProgress?.completed != true {
                     markCompletedButton
                 }
 
@@ -109,10 +109,6 @@ struct EpisodeDetailView: View {
             }
             .padding(.vertical, 8)
         }
-    }
-
-    private var showMarkCompletedButton: Bool {
-        playback.sessionState == .active && savedProgress?.completed != true
     }
 
     private var markCompletedButton: some View {
@@ -134,7 +130,7 @@ struct EpisodeDetailView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.regular)
-        .disabled(markCompletedInFlight)
+        .disabled(markCompletedInFlight || playback.sessionState != .active)
         .accessibilityLabel("Mark this episode as completed")
     }
 
