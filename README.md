@@ -1,6 +1,6 @@
 # s3player-app
 
-A SwiftUI iOS/macOS client for the [s3player](./tmp/s3player) backend — a single-password-gated audio service that indexes radio show recordings stored in S3 and exposes a JSON API for browse and playback.
+A SwiftUI iOS/macOS client for the [s3player](https://github.com/andrewtheguy/s3player) backend — a single-password-gated audio service that indexes radio show recordings stored in S3 and exposes a JSON API for browse and playback.
 
 The native app mirrors the web frontend's UX (Stations → Shows → Year/Month → Episodes → Player) with iOS-native niceties: lock-screen Now Playing, background audio, single-active-session playback with takeover, and resume on entry.
 
