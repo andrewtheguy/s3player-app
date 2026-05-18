@@ -62,6 +62,7 @@ final class PlaybackController: ObservableObject {
     private var lastSavedPositionMs: Int = -1
     private var lastTickedEpisodeId: Int?
     private var resumePositionMs: Int = 0
+    private var suppressNextPauseProgressSave = false
     /// Set while a user-initiated mark-completed is in flight. Mirrors the web
     /// frontend's `justMarkedCompletedRef`: gates `saveProgressIfActive` so the
     /// pause we trigger after the manual completion can't race a completed=false
@@ -140,7 +141,11 @@ final class PlaybackController: ObservableObject {
                     self.startProgressTimer()
                 } else {
                     self.stopProgressTimer()
-                    Task { await self.saveProgressIfActive() }
+                    if self.suppressNextPauseProgressSave {
+                        self.suppressNextPauseProgressSave = false
+                    } else {
+                        Task { await self.saveProgressIfActive() }
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -361,10 +366,14 @@ final class PlaybackController: ObservableObject {
 
     private func beginPlay(episode: Episode, show: ShowDetail) async {
         if let prior = currentEpisode, prior.id != episode.id {
-            // Snapshot prior position before player.stop() resets it inside prepare.
+            // Snapshot prior position before clearing the old player. The
+            // controller saves this progress explicitly, so suppress the pause
+            // sink that player.stop() would otherwise schedule for the swap.
             let positionMs = max(0, Int(player.elapsedTime * 1000))
             let durationMs = player.hasDuration ? Int(player.duration * 1000) : nil
+            stopPlayerForEpisodeSwap()
             await saveProgress(positionMs: positionMs, durationMs: durationMs, completed: false)
+            if Task.isCancelled { return }
         }
 
         let priorEpisodeId = currentEpisode?.id
@@ -431,7 +440,9 @@ final class PlaybackController: ObservableObject {
         // in-memory cache so we don't hit disk twice in a row.
         persistSnapshot(progressOverride: ProgressResponse(
             position_ms: resumePositionMs,
-            duration_ms: cachedSnapshot?.progress.duration_ms,
+            duration_ms: cachedSnapshot?.episode.id == episode.id
+                ? cachedSnapshot?.progress.duration_ms
+                : nil,
             completed: replayConfirmNeeded,
             last_played_at: nil
         ))
@@ -834,7 +845,7 @@ final class PlaybackController: ObservableObject {
         guard let store = snapshotStore,
               let episode = currentEpisode,
               let show = currentShow else { return }
-        let existing = cachedSnapshot
+        let existing = cachedSnapshot?.episode.id == episode.id ? cachedSnapshot : nil
         let progress = progressOverride
             ?? existing?.progress
             ?? ProgressResponse(
@@ -863,6 +874,13 @@ final class PlaybackController: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func stopPlayerForEpisodeSwap() {
+        if player.isPlaying {
+            suppressNextPauseProgressSave = true
+        }
+        player.stop()
+    }
 
     private func nowPlayingTitle(for episode: Episode) -> String {
         let date = DateFormatter.sharedISODate.string(from: episode.aired_on)
