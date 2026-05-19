@@ -44,6 +44,10 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var phase: PlaybackPhase = .idle
     @Published private(set) var isOffline: Bool = false
     @Published private(set) var cachedChapters: [Chapter] = []
+    /// File extension of the audio file backing the current snapshot
+    /// (e.g. "mp3", "m4a", "ogg"). Mirrors `cachedSnapshot.downloadedFileExtension`
+    /// so views can react without reaching into the private snapshot.
+    @Published private(set) var currentAudioFormat: String?
     @Published var isExpanded: Bool = false
     /// Bumped each time a completion lands durably on the server (either via
     /// the natural-end save or a queued-flush retry). Views that show
@@ -104,6 +108,7 @@ final class PlaybackController: ObservableObject {
             cachedChapters = snapshot.chapters
             resumePositionMs = snapshot.progress.position_ms
             replayConfirmNeeded = snapshot.progress.completed
+            currentAudioFormat = snapshot.downloadedFileExtension
         }
 
         // Heartbeat / external clear: any token transition while we're active or
@@ -381,6 +386,7 @@ final class PlaybackController: ObservableObject {
         currentShow = show
         if priorEpisodeId != episode.id {
             cachedChapters = episode.chapters ?? []
+            currentAudioFormat = nil
         }
         loadError = nil
         replayConfirmNeeded = false
@@ -816,6 +822,7 @@ final class PlaybackController: ObservableObject {
         try? downloader.purgeAll()
         try? snapshotStore?.clear()
         cachedSnapshot = nil
+        currentAudioFormat = nil
         pendingProgressStore?.clear()
         player.stop()
         currentEpisode = nil
@@ -867,6 +874,7 @@ final class PlaybackController: ObservableObject {
         do {
             try store.save(snapshot)
             cachedSnapshot = snapshot
+            currentAudioFormat = extName
         } catch {
             // Failed disk write: leave cachedSnapshot untouched so the next
             // attempt sees the same baseline (don't pretend the write landed).
