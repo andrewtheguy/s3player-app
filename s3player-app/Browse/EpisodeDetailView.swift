@@ -81,12 +81,25 @@ struct EpisodeDetailView: View {
                 .foregroundStyle(.secondary)
 
                 if isCurrentlyPlaying {
-                    Label("Now Playing", systemImage: "waveform")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.tint)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    HStack(spacing: 8) {
+                        Label("Now Playing", systemImage: "waveform")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.accentColor.opacity(0.15), in: Capsule())
+                        if let format = playback.currentAudioFormat, !format.isEmpty {
+                            Text(format.uppercased())
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background {
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(.secondary.opacity(0.15))
+                                }
+                                .accessibilityLabel("Audio format \(format.uppercased())")
+                        }
+                    }
                 } else {
                     playButton
 
