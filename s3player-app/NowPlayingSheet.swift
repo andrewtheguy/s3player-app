@@ -218,11 +218,16 @@ struct NowPlayingSheet: View {
     private func chapterRow(_ chapter: Chapter) -> some View {
         let elapsedMs = Int(player.elapsedTime * 1000)
         let isCurrent = elapsedMs >= chapter.start && elapsedMs < chapter.end
+        let chapterDurationMs = max(1, chapter.end - chapter.start)
+        let chapterProgress = isCurrent
+            ? min(1, max(0, Double(elapsedMs - chapter.start) / Double(chapterDurationMs)))
+            : 0
         let rightLabel = isCurrent
             ? "-\(formatMs(max(0, chapter.end - elapsedMs)))"
             : formatMs(chapter.end - chapter.start)
 
         return Button {
+            guard !isCurrent else { return }
             controller.seek(toMilliseconds: chapter.start)
         } label: {
             HStack(spacing: 12) {
@@ -237,7 +242,17 @@ struct NowPlayingSheet: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(isCurrent ? Color.accentColor.opacity(0.15) : Color.clear)
+            .background {
+                if isCurrent {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Color.accentColor.opacity(0.15)
+                            Color.accentColor.opacity(0.4)
+                                .frame(width: geo.size.width * chapterProgress)
+                        }
+                    }
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
