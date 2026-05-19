@@ -255,6 +255,19 @@ struct NowPlayingSheet: View {
                         .foregroundStyle(.secondary)
                     Text(slot)
                 }
+                if let format = controller.currentAudioFormat, !format.isEmpty {
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text(format.uppercased())
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(.secondary.opacity(0.15))
+                        }
+                        .accessibilityLabel("Audio format \(format.uppercased())")
+                }
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
