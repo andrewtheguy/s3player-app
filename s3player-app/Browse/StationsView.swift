@@ -15,6 +15,7 @@ private enum RailKind {
 struct StationsView: View {
     @ObservedObject var auth: AuthViewModel
     @EnvironmentObject private var playback: PlaybackController
+    @EnvironmentObject private var navigation: NavigationCoordinator
     @State private var state: LoadState<[Station]> = .idle
     @State private var inProgressState: LoadState<[RecentEpisode]> = .idle
     @State private var recentState: LoadState<[RecentEpisode]> = .idle
@@ -191,14 +192,21 @@ struct StationsView: View {
                 .foregroundStyle(.secondary)
         case .loaded(let stations):
             ForEach(stations) { station in
-                NavigationLink(value: station) {
+                Button {
+                    navigation.path.append(station)
+                } label: {
                     HStack {
                         Text(station.id)
                             .font(.body)
                         Spacer()
                         CountBadge(count: station.show_count)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
     }
