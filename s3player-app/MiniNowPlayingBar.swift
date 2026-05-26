@@ -42,12 +42,12 @@ struct MiniNowPlayingBar: View {
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text("Now Playing")
+                        Text(controller.replayConfirmNeeded ? "Completed" : "Now Playing")
                             .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.up")
                             .font(.caption2.weight(.bold))
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(controller.replayConfirmNeeded ? .green : .secondary)
 
                     Text(show.name)
                         .font(.subheadline.weight(.semibold))
@@ -111,6 +111,9 @@ struct MiniNowPlayingBar: View {
     }
 
     private var progressText: String {
+        if controller.replayConfirmNeeded {
+            return "Open player to replay"
+        }
         switch controller.phase {
         case .preparing:
             return "Preparing…"
@@ -177,19 +180,32 @@ struct MiniNowPlayingBar: View {
         } else {
             switch controller.sessionState {
             case .active:
-                Button {
-                    if player.hasLoadedAudio {
-                        controller.togglePlayback()
-                    } else if controller.currentEpisode != nil {
-                        controller.resumeFromSnapshot()
+                if controller.replayConfirmNeeded {
+                    Button {
+                        controller.expand()
+                    } label: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.green)
+                            .frame(width: 44, height: 44)
                     }
-                } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Episode completed — open player to replay")
+                } else {
+                    Button {
+                        if player.hasLoadedAudio {
+                            controller.togglePlayback()
+                        } else if controller.currentEpisode != nil {
+                            controller.resumeFromSnapshot()
+                        }
+                    } label: {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(player.isLoading || (!player.hasLoadedAudio && controller.currentEpisode == nil))
                 }
-                .buttonStyle(.plain)
-                .disabled(player.isLoading || (!player.hasLoadedAudio && controller.currentEpisode == nil))
             case .inactive, .displaced:
                 Button {
                     controller.requestClaimSession()
