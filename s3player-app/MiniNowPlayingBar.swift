@@ -106,8 +106,16 @@ struct MiniNowPlayingBar: View {
         if case .downloading(let fraction) = controller.phase {
             return min(max(fraction, 0), 1)
         }
-        guard player.hasDuration else { return 0 }
-        return min(max(player.progress, 0), 1)
+        if player.hasDuration {
+            return min(max(player.progress, 0), 1)
+        }
+        // Audio not loaded yet (fresh launch): show the saved snapshot position
+        // so the bar isn't stuck at zero until the user taps resume.
+        if let resume = controller.snapshotResumeSeconds,
+           let duration = controller.snapshotDurationSeconds, duration > 0 {
+            return min(max(resume / duration, 0), 1)
+        }
+        return 0
     }
 
     private var progressText: String {
@@ -122,8 +130,15 @@ struct MiniNowPlayingBar: View {
         default:
             break
         }
-        guard player.hasDuration else { return "--:-- / --:--" }
-        return "\(player.formattedTime(player.elapsedTime)) / \(player.formattedTime(player.duration))"
+        if player.hasDuration {
+            return "\(player.formattedTime(player.elapsedTime)) / \(player.formattedTime(player.duration))"
+        }
+        // Pre-load fallback: render the saved position from the snapshot.
+        if let resume = controller.snapshotResumeSeconds,
+           let duration = controller.snapshotDurationSeconds {
+            return "\(player.formattedTime(resume)) / \(player.formattedTime(duration))"
+        }
+        return "--:-- / --:--"
     }
 
     @ViewBuilder

@@ -236,6 +236,27 @@ final class PlaybackController: ObservableObject {
         currentEpisode != nil && !player.hasLoadedAudio && !phase.isBusy
     }
 
+    /// Saved playhead (seconds) for the current episode, taken from the on-disk
+    /// snapshot. Surfaced so the mini bar / now-playing sheet can render the
+    /// resume position before the audio asset loads and the player starts
+    /// reporting its own elapsed/duration. nil when there's no matching snapshot.
+    var snapshotResumeSeconds: Double? {
+        guard let snapshot = cachedSnapshot,
+              snapshot.episode.id == currentEpisode?.id else { return nil }
+        return Double(snapshot.progress.position_ms) / 1000
+    }
+
+    /// Saved total duration (seconds) for the current episode from the snapshot,
+    /// or nil when the snapshot hasn't recorded a usable duration yet. Companion
+    /// to [[snapshotResumeSeconds]] for pre-load progress rendering.
+    var snapshotDurationSeconds: Double? {
+        guard let snapshot = cachedSnapshot,
+              snapshot.episode.id == currentEpisode?.id,
+              let durationMs = snapshot.progress.duration_ms,
+              durationMs > 0 else { return nil }
+        return Double(durationMs) / 1000
+    }
+
     func togglePlayback() {
         guard canControlPlayback else { return }
         player.togglePlayback()
