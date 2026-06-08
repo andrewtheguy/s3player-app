@@ -78,7 +78,7 @@ struct NowPlayingSheet: View {
                 scrubberProgress = newProgress
             }
             .onAppear {
-                scrubberProgress = player.progress
+                scrubberProgress = displayProgressFraction
             }
             .task(id: controller.currentEpisode?.id) {
                 await loadChapters(for: controller.currentEpisode?.id)
@@ -472,13 +472,39 @@ struct NowPlayingSheet: View {
             .disabled(!player.hasDuration)
 
             HStack {
-                Text(player.formattedTime(player.elapsedTime))
+                Text(player.formattedTime(displayElapsedSeconds))
                 Spacer()
-                Text(player.hasDuration ? player.formattedTime(player.duration) : "--:--")
+                Text(displayDurationText)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
+    }
+
+    // Before the audio asset loads (fresh launch, pre-resume) the player reports
+    // zero elapsed/duration. Fall back to the saved snapshot position so the
+    // slider and time labels show where playback will resume instead of 0:00.
+
+    private var displayProgressFraction: Double {
+        if player.hasDuration { return player.progress }
+        if let resume = controller.snapshotResumeSeconds,
+           let duration = controller.snapshotDurationSeconds, duration > 0 {
+            return min(max(resume / duration, 0), 1)
+        }
+        return 0
+    }
+
+    private var displayElapsedSeconds: Double {
+        if player.hasDuration { return player.elapsedTime }
+        return controller.snapshotResumeSeconds ?? player.elapsedTime
+    }
+
+    private var displayDurationText: String {
+        if player.hasDuration { return player.formattedTime(player.duration) }
+        if let duration = controller.snapshotDurationSeconds {
+            return player.formattedTime(duration)
+        }
+        return "--:--"
     }
 
     private var unplayableBanner: some View {
