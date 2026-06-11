@@ -25,6 +25,8 @@ final class AudioPlayerViewModel: ObservableObject {
     private var itemStatusObservation: NSKeyValueObservation?
     private var itemDurationObservation: NSKeyValueObservation?
     private var playbackEndObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private var wasPlayingBeforeInterruption = false
     private var pendingSeekSeconds: Double = 0
     private var nowPlayingTitle: String?
     private var nowPlayingArtist: String?
@@ -45,6 +47,9 @@ final class AudioPlayerViewModel: ObservableObject {
         // shared command center for the lifetime of the app.
         for (command, token) in remoteCommandTokens {
             command.removeTarget(token)
+        }
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
         }
     }
 
@@ -96,6 +101,7 @@ final class AudioPlayerViewModel: ObservableObject {
         observe(item: item)
         addPeriodicTimeObserver(to: player)
         configureRemoteCommandsIfNeeded()
+        configureInterruptionObserverIfNeeded()
         updateNowPlayingInfo()
     }
 
@@ -133,6 +139,7 @@ final class AudioPlayerViewModel: ObservableObject {
         elapsedTime = 0
         duration = 0
         pendingSeekSeconds = 0
+        wasPlayingBeforeInterruption = false
         hasFinishedPlayback = false
         playbackUnsupported = false
         didReachReadyToPlay = false
@@ -411,6 +418,79 @@ final class AudioPlayerViewModel: ObservableObject {
         }
         remoteCommandTokens.append((center.changePlaybackPositionCommand, positionToken))
     }
+
+    // Subscribe to audio-session interruptions (phone calls, Siri, other apps
+    // grabbing the session — common in the car over Bluetooth/CarPlay). Without
+    // this, an interruption pauses our AVPlayer at the OS level while `isPlaying`
+    // stays true (UI stuck "playing") and playback never resumes when the call
+    // ends. Registered once; the session notification is global, not per-item.
+    private func configureInterruptionObserverIfNeeded() {
+        #if os(iOS)
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            // Pull the Sendable values out of the (non-Sendable) notification
+            // before hopping to the MainActor.
+            guard
+                let info = notification.userInfo,
+                let rawType = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                let type = AVAudioSession.InterruptionType(rawValue: rawType)
+            else { return }
+            let rawOptions = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+            Task { @MainActor [weak self] in
+                self?.handleInterruption(type: type, options: options)
+            }
+        }
+        #endif
+    }
+
+    #if os(iOS)
+    private func handleInterruption(
+        type: AVAudioSession.InterruptionType,
+        options: AVAudioSession.InterruptionOptions
+    ) {
+        switch type {
+        case .began:
+            // The system has already paused us. Sync UI state and remember we
+            // were playing so we can resume once the interruption ends.
+            wasPlayingBeforeInterruption = isPlaying
+            if isPlaying {
+                isPlaying = false
+                statusMessage = "Paused."
+                updateNowPlayingInfo()
+            }
+        case .ended:
+            guard wasPlayingBeforeInterruption else { return }
+            wasPlayingBeforeInterruption = false
+            // Only resume when the system grants it (.shouldResume) and the
+            // app's own session gate still allows playback (not displaced).
+            guard options.contains(.shouldResume), canStartRemotePlayback() else { return }
+            resumeAfterInterruption()
+        @unknown default:
+            break
+        }
+    }
+
+    private func resumeAfterInterruption() {
+        guard let player else { return }
+        // The session is deactivated during an interruption; reactivate it
+        // before resuming or play() silently no-ops.
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            statusMessage = "Could not resume audio: \(error.localizedDescription)"
+            return
+        }
+        player.play()
+        isPlaying = true
+        statusMessage = "Playing."
+        updateNowPlayingInfo()
+    }
+    #endif
 
     nonisolated private func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
         Task { @MainActor [weak self] in
