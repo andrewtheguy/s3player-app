@@ -136,25 +136,36 @@ struct StationsView: View {
         } message: { episode in
             Text(episode.show_name)
         }
-        .alert(
-            "No active player session",
-            isPresented: $noSessionDismissShown
-        ) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Only the currently-active player can change playback state. Open this episode and take over playback to claim the session, then try again.")
+        // Each alert is anchored on its own isolated view rather than stacked
+        // directly on the List. Multiple presentation modifiers competing on a
+        // single view leaves the boolean-driven alert stuck after its first
+        // dismissal, so re-pressing X would set the flag but never re-present
+        // until the list refreshed and rebuilt the subtree.
+        .background {
+            Color.clear
+                .alert(
+                    "No active player session",
+                    isPresented: $noSessionDismissShown
+                ) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text("Only the currently-active player can change playback state. Open this episode and take over playback to claim the session, then try again.")
+                }
         }
-        .alert(
-            "Couldn't update Continue listening",
-            isPresented: Binding(
-                get: { dismissErrorMessage != nil },
-                set: { if !$0 { dismissErrorMessage = nil } }
-            ),
-            presenting: dismissErrorMessage
-        ) { _ in
-            Button("OK", role: .cancel) { }
-        } message: { message in
-            Text(message)
+        .background {
+            Color.clear
+                .alert(
+                    "Couldn't update Continue listening",
+                    isPresented: Binding(
+                        get: { dismissErrorMessage != nil },
+                        set: { if !$0 { dismissErrorMessage = nil } }
+                    ),
+                    presenting: dismissErrorMessage
+                ) { _ in
+                    Button("OK", role: .cancel) { }
+                } message: { message in
+                    Text(message)
+                }
         }
         .navigationDestination(for: Station.self) { station in
             ShowsView(station: station.id, auth: auth)
